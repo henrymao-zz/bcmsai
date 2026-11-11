@@ -52,6 +52,32 @@ cmake -S . -B build -DSAI_BCM_TARGET=BCM56371 -DSA_BCM_BUILD_OPENBCM=ON
 cmake --build build
 ```
 
+## Submodules
+
+```sh
+git submodule update --init --recursive
+```
+
+- `SAI` → opencomputeproject/SAI @ **v1.6.4** (`b2487f0`)
+- `OpenBCM` → Broadcom-Network-Switching-Software/OpenBCM @ **master** (`6d2330ce`, tree contains `sdk-6.5.27`)
+
+On slow/unstable links a full `OpenBCM` clone may fail mid-transfer
+(`GnuTLS recv error` / `early EOF`). Workaround: partial clone + sparse
+checkout of just the SDK tree:
+
+```sh
+git config --global http.version HTTP/1.1
+git submodule update --init SAI                     # small, clones fine
+git clone --depth 1 --filter=blob:none --no-checkout \
+    https://github.com/Broadcom-Network-Switching-Software/OpenBCM OpenBCM
+git -C OpenBCM sparse-checkout set sdk-6.5.27
+git -C OpenBCM checkout master
+git submodule init && git submodule absorbgitdirs
+```
+
+The partial/sparse population is a local working-tree concern only — the
+recorded gitlink SHA is identical either way.
+
 ## Layout
 
 ```
