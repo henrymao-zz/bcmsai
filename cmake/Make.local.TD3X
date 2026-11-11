@@ -1,0 +1,4 @@
+## Trident 3-X (LTSW) variant of OpenBCM sdk-6.5.27 make/Make.local.
+
+# BCM_56370_A0 = 1
+BCM_56880_A0 = 1

@@ -1,0 +1,16 @@
+## OpenBCM sdk-6.5.27 device selection for libsai-bcm.
+##
+## This file is copied/edited into OpenBCM/sdk-6.5.27/make/Make.local by the
+## top-level build (see cmake/obcm.cmake / scripts/obcm_build.sh) to select the
+## active device family. Exactly one family macro should be set.
+##
+## Target families:
+##   BCM56371  (initial bring-up)  -> BCM_56370_A0 = 1  (classic ESW, Firebolt6)
+##   Trident 3-X (follow-on)      -> BCM_56880_A0 = 1  (LTSW / XFS)
+##
+## The BCM56371 is a member of the BCM56370 silicon family ("Firebolt6");
+## the specific SKU is auto-detected at PCI attach via the device-ID table in
+## include/soc/devids.h (BCM56371_DEVICE_ID = 0xb371).
+
+BCM_56370_A0 = 1
+# BCM_56880_A0 = 1

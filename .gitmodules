@@ -1,0 +1,6 @@
+[submodule "SAI"]
+	path = SAI
+	url = https://github.com/opencomputeproject/SAI
+[submodule "OpenBCM"]
+	path = OpenBCM
+	url = https://github.com/Broadcom-Network-Switching-Software/OpenBCM

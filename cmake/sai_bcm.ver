@@ -1,0 +1,13 @@
+LIBSAI_BCM_0.1.0 {
+    global:
+        sai_api_initialize;
+        sai_api_query;
+        sai_api_uninitialize;
+        sai_log_set;
+        sai_object_type_query;
+        sai_switch_id_query;
+        sai_dbg_generate_dump;
+        sai_object_type_get_availability;
+    local:
+        *;
+};
