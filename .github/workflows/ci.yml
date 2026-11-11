@@ -22,10 +22,17 @@ jobs:
         run: |
           cmake -S . -B build \
             -DSAI_BCM_TARGET=${{ matrix.target }} \
+            -DSAI_BCM_BACKEND=mock \
             -DSA_BCM_BUILD_OPENBCM=OFF
 
       - name: Build
         run: cmake --build build
+
+      - name: Unit tests (mock backend)
+        run: |
+          ./build/test_oid
+          ./build/test_switch
+          ./build/test_port
 
       - name: Smoke test
         run: ./build/smoke_load ./build/libsai.so
@@ -43,3 +50,7 @@ jobs:
             sai_log_set sai_object_type_query sai_switch_id_query \
             sai_dbg_generate_dump sai_object_type_get_availability | sort -u)
           diff <(printf '%s\n' "${want}") <(printf '%s\n' "${got}")
+
+      - name: No backend symbols leak into the dynamic table
+        run: |
+          test "$(nm -D build/libsai.so | grep -cE ' (bcm_|_shr_)' || true)" -eq 0

@@ -1,14 +1,12 @@
 /*
  * libsai-bcm entry points.
  *
- * P0: implements the SAI adapter entry points and the api_query dispatch
- * over the 44 zero-initialized per-module vtables. No BCM calls yet — the
- * real bcm_init()/bcm_attach() happens in sai_bcm_switch.c (P1) once the
- * OpenBCM SDK libraries are linked in.
+ * sai_api_initialize/uninitialize/log_set lifecycle, sai_api_query dispatch
+ * over the per-module vtables, and the OID-based object queries.
  */
 #include "sai_bcm_internal.h"
 
-#include <pthread.h>
+#include <string.h>
 
 /* ---------------------------------------------------------------------------
  * Global adapter state
@@ -24,6 +22,24 @@ static struct {
     .log_level    = SAI_LOG_LEVEL_WARN,
     .lock         = PTHREAD_MUTEX_INITIALIZER,
 };
+
+/* ---------------------------------------------------------------------------
+ * Adapter lock / lifecycle helpers (used by all modules)
+ * --------------------------------------------------------------------------- */
+void sai_bcm_lock(void)
+{
+    pthread_mutex_lock(&g_state.lock);
+}
+
+void sai_bcm_unlock(void)
+{
+    pthread_mutex_unlock(&g_state.lock);
+}
+
+bool sai_bcm_initialized(void)
+{
+    return g_state.initialized;
+}
 
 /* ---------------------------------------------------------------------------
  * sai_api_initialize / sai_api_uninitialize
@@ -64,6 +80,14 @@ sai_status_t sai_api_uninitialize(void)
         return SAI_STATUS_UNINITIALIZED;
     }
 
+    if (g_sai_bcm_sw.created) {
+        SAI_BCM_LOG(SAI_LOG_LEVEL_WARN,
+                    "uninitialize with live switch; detaching");
+        (void)bcm_detach(g_sai_bcm_sw.unit);
+        memset(&g_sai_bcm_sw, 0, sizeof(g_sai_bcm_sw));
+        g_sai_bcm_sw.unit = SAI_BCM_UNIT_DEFAULT;
+    }
+
     g_state.initialized = false;
     g_state.services     = NULL;
 
@@ -86,7 +110,7 @@ sai_status_t sai_api_query(sai_api_t api, void **api_method_table)
     const void *tbl = NULL;
 
     switch (api) {
-#define SAI_BCM_API(ENUM, NAME) \
+#define SAI_BCM_API(ENUM, NAME, IMPL) \
         case ENUM: tbl = &sai_bcm_##NAME##_api; break;
 #include "sai_bcm_api_tables.x"
 #undef SAI_BCM_API
@@ -115,18 +139,31 @@ sai_status_t sai_log_set(sai_api_t api, sai_log_level_t log_level)
 }
 
 /* ---------------------------------------------------------------------------
- * Object queries — P0 stubs (no OID registry yet)
+ * Object queries — decode the encoded SAI object id
  * --------------------------------------------------------------------------- */
 sai_object_type_t sai_object_type_query(sai_object_id_t object_id)
 {
-    (void)object_id;
-    return SAI_OBJECT_TYPE_NULL;
+    sai_object_type_t type = sai_bcm_oid_type(object_id);
+
+    if (type == SAI_OBJECT_TYPE_NULL) {
+        return SAI_OBJECT_TYPE_NULL;
+    }
+    return type;
 }
 
 sai_object_id_t sai_switch_id_query(sai_object_id_t object_id)
 {
-    (void)object_id;
-    return SAI_NULL_OBJECT_ID;
+    uint8_t sw = sai_bcm_oid_switch(object_id);
+    if (sw == 0) {
+        return SAI_NULL_OBJECT_ID;
+    }
+    if (!g_sai_bcm_sw.created) {
+        return SAI_NULL_OBJECT_ID;
+    }
+    if (sw != SAI_BCM_SWITCH_INSTANCE_FIRST) {
+        return SAI_NULL_OBJECT_ID;
+    }
+    return g_sai_bcm_sw.switch_oid;
 }
 
 sai_status_t sai_dbg_generate_dump(const char *dump_file_name)
@@ -141,14 +178,24 @@ sai_status_t sai_object_type_get_availability(sai_object_id_t switch_id,
                                               const sai_attribute_t *attr_list,
                                               uint64_t *count)
 {
-    (void)switch_id;
-    (void)object_type;
-    (void)attr_count;
     (void)attr_list;
 
     if (count == NULL) {
         return SAI_STATUS_INVALID_PARAMETER;
     }
-    *count = 0;
-    return SAI_STATUS_NOT_SUPPORTED;
+    if (!g_sai_bcm_sw.created || switch_id != g_sai_bcm_sw.switch_oid) {
+        return SAI_STATUS_ITEM_NOT_FOUND;
+    }
+
+    switch (object_type) {
+    case SAI_OBJECT_TYPE_PORT:
+        if (attr_count != 0) {
+            return SAI_STATUS_NOT_SUPPORTED;
+        }
+        *count = g_sai_bcm_sw.port_count;
+        return SAI_STATUS_SUCCESS;
+    default:
+        *count = 0;
+        return SAI_STATUS_NOT_SUPPORTED;
+    }
 }

@@ -1,14 +1,14 @@
 /*
- * libsai-bcm logging + SAI status helpers.
+ * libsai-bcm logging + status helpers.
  *
- * P0: minimal stderr logger. In P1+ this will route into OpenBCM's bsl
- * (BSL_LOG_ADD/APPL_LOG) and map _shr_err_t -> sai_status_t here.
+ * sai_bcm_status() maps OpenBCM error codes (_shr_err_t / BCM_E_*) to SAI
+ * status codes. sai_bcm_log() is a minimal stderr logger; in later phases it
+ * can be routed into OpenBCM's bsl.
  */
 #include "sai_bcm_internal.h"
 
 #include <stdio.h>
 #include <stdarg.h>
-#include <time.h>
 
 static sai_log_level_t g_level = SAI_LOG_LEVEL_WARN;
 
@@ -42,4 +42,39 @@ void sai_bcm_log(sai_log_level_t level, const char *file, int line,
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
     va_end(ap);
+}
+
+sai_status_t sai_bcm_status(int bcm_rv)
+{
+    if (bcm_rv >= 0) {
+        return SAI_STATUS_SUCCESS;
+    }
+
+    switch (bcm_rv) {
+    case BCM_E_PARAM:
+    case BCM_E_UNIT:
+    case BCM_E_PORT:
+    case BCM_E_BADID:
+    case BCM_E_CONFIG:
+        return SAI_STATUS_INVALID_PARAMETER;
+    case BCM_E_INIT:
+        return SAI_STATUS_UNINITIALIZED;
+    case BCM_E_UNAVAIL:
+    case BCM_E_DISABLED:
+    case BCM_E_NO_HANDLER:
+        return SAI_STATUS_NOT_SUPPORTED;
+    case BCM_E_MEMORY:
+        return SAI_STATUS_NO_MEMORY;
+    case BCM_E_NOT_FOUND:
+        return SAI_STATUS_ITEM_NOT_FOUND;
+    case BCM_E_EXISTS:
+        return SAI_STATUS_ITEM_ALREADY_EXISTS;
+    case BCM_E_FULL:
+    case BCM_E_RESOURCE:
+        return SAI_STATUS_TABLE_FULL;
+    case BCM_E_BUSY:
+        return SAI_STATUS_FAILURE;
+    default:
+        return SAI_STATUS_FAILURE;
+    }
 }

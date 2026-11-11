@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(libsai_bcm
-    VERSION 0.1.0
+    VERSION 0.2.0
     LANGUAGES C
     DESCRIPTION "Vendor SAI adapter on top of Broadcom OpenBCM SDK 6.5.27")
 
@@ -17,9 +17,14 @@ project(libsai_bcm
 set(SAI_BCM_TARGET "BCM56371" CACHE STRING "OpenBCM target device family")
 set_property(CACHE SAI_BCM_TARGET PROPERTY STRINGS "BCM56371" "TD3X")
 
+# Backend selection:
+#   mock    - link the mock BCM backend (dev/CI; no hardware required)
+#   openbcm - link the real OpenBCM SDK archives (requires
+#             SAI_BCM_BUILD_OPENBCM=ON and the SDK to be built)
+set(SAI_BCM_BACKEND "mock" CACHE STRING "BCM backend to link")
+set_property(CACHE SAI_BCM_BACKEND PROPERTY STRINGS "mock" "openbcm")
+
 # Whether to build the OpenBCM SDK libraries from the submodule.
-# P0 ships a stub libsai.so that links nothing from OpenBCM yet; the real
-# bcm_* integration starts in P1. Leave OFF for the P0 smoke build.
 option(SAI_BCM_BUILD_OPENBCM "Build OpenBCM SDK 6.5.27 libraries" OFF)
 
 # Map target -> OpenBCM build macro
@@ -36,17 +41,37 @@ else()
                         "(expected 'BCM56371' or 'TD3X')")
 endif()
 
+if(SAI_BCM_BACKEND STREQUAL "mock")
+    set(SAI_BCM_BACKEND_IS_MOCK ON)
+elseif(SAI_BCM_BACKEND STREQUAL "openbcm")
+    set(SAI_BCM_BACKEND_IS_MOCK OFF)
+    if(NOT SAI_BCM_BUILD_OPENBCM)
+        message(FATAL_ERROR "SAI_BCM_BACKEND=openbcm requires "
+                            "SAI_BCM_BUILD_OPENBCM=ON")
+    endif()
+else()
+    message(FATAL_ERROR "Unsupported SAI_BCM_BACKEND '${SAI_BCM_BACKEND}' "
+                        "(expected 'mock' or 'openbcm')")
+endif()
+
 message(STATUS "libsai-bcm: target=${SAI_BCM_TARGET} "
-                "macro=${SAI_BCM_OBCM_CHIP_MACRO} stack=${SAI_BCM_OBCM_STACK}")
+                "macro=${SAI_BCM_OBCM_CHIP_MACRO} stack=${SAI_BCM_OBCM_STACK} "
+                "backend=${SAI_BCM_BACKEND}")
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 set(SAI_INC_DIR  ${CMAKE_SOURCE_DIR}/SAI/inc)
+set(OBCM_INC     ${CMAKE_SOURCE_DIR}/OpenBCM/sdk-6.5.27/include)
 set(OBCM_ROOT    ${CMAKE_SOURCE_DIR}/OpenBCM/sdk-6.5.27)
 
 if(NOT EXISTS ${SAI_INC_DIR}/sai.h)
     message(FATAL_ERROR "SAI headers not found at ${SAI_INC_DIR}. "
+                        "Run: git submodule update --init --recursive")
+endif()
+
+if(NOT EXISTS ${OBCM_INC}/bcm/port.h)
+    message(FATAL_ERROR "OpenBCM headers not found at ${OBCM_INC}. "
                         "Run: git submodule update --init --recursive")
 endif()
 
@@ -56,33 +81,59 @@ if(SAI_BCM_BUILD_OPENBCM AND NOT EXISTS ${OBCM_ROOT}/Makefile)
 endif()
 
 # ---------------------------------------------------------------------------
-# Library
+# Adapter objects (compiled against the REAL OpenBCM headers)
 # ---------------------------------------------------------------------------
-add_library(sai_bcm SHARED
+add_library(sai_bcm_obj OBJECT
     src/sai_bcm_api.c
+    src/sai_bcm_switch.c
+    src/sai_bcm_port.c
     src/sai_bcm_stubs.c
     src/sai_bcm_log.c
 )
 
-target_include_directories(sai_bcm
+set_target_properties(sai_bcm_obj PROPERTIES
+    C_STANDARD          11
+    C_STANDARD_REQUIRED ON
+    POSITION_INDEPENDENT_CODE ON)
+
+target_include_directories(sai_bcm_obj
     PRIVATE
         ${CMAKE_SOURCE_DIR}/include
-        ${SAI_INC_DIR})
+        ${SAI_INC_DIR}
+        ${OBCM_INC})
+
+target_compile_definitions(sai_bcm_obj PRIVATE
+    SAI_BCM_TARGET_NAME="${SAI_BCM_TARGET}"
+    SAI_BCM_OBCM_CHIP_MACRO="${SAI_BCM_OBCM_CHIP_MACRO}"
+    SAI_BCM_OBCM_STACK="${SAI_BCM_OBCM_STACK}")
+
+if(SAI_BCM_BACKEND_IS_MOCK)
+    add_library(sai_bcm_mock STATIC tests/mock/mock_bcm.c)
+    target_include_directories(sai_bcm_mock PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/mock ${OBCM_INC})
+    set_target_properties(sai_bcm_mock PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED ON)
+endif()
+
+# ---------------------------------------------------------------------------
+# libsai.so - the shipped shared object
+# ---------------------------------------------------------------------------
+add_library(sai_bcm SHARED $<TARGET_OBJECTS:sai_bcm_obj>)
 
 # Hide everything except the SAI entry points (sai_*). The linker version
 # script (cmake/sai_bcm.ver) is the sole export authority: it lists the SAI
 # ABI symbols as global and marks everything else local, so all internal
-# symbols and any future BCM symbols stay hidden inside the shared object.
+# symbols (and mock bcm_* symbols in mock builds) stay inside the .so.
 set_target_properties(sai_bcm PROPERTIES
     OUTPUT_NAME             sai
-    C_STANDARD              11
-    C_STANDARD_REQUIRED     ON
     POSITION_INDEPENDENT_CODE ON)
 
 target_link_options(sai_bcm PRIVATE
     "LINKER:--version-script=${CMAKE_SOURCE_DIR}/cmake/sai_bcm.ver")
 
-if(SAI_BCM_BUILD_OPENBCM)
+if(SAI_BCM_BACKEND_IS_MOCK)
+    target_link_libraries(sai_bcm PRIVATE sai_bcm_mock)
+else()
     # P1+ integration point: link the OpenBCM archive set selected by target.
     if(SAI_BCM_TARGET STREQUAL "BCM56371")
         target_link_libraries(sai_bcm PRIVATE
@@ -109,9 +160,36 @@ if(SAI_BCM_BUILD_OPENBCM)
 endif()
 
 # ---------------------------------------------------------------------------
+# Static adapter library for unit tests (direct access to internals)
+# ---------------------------------------------------------------------------
+add_library(sai_bcm_static STATIC $<TARGET_OBJECTS:sai_bcm_obj>)
+if(SAI_BCM_BACKEND_IS_MOCK)
+    target_link_libraries(sai_bcm_static PUBLIC sai_bcm_mock)
+endif()
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
+
+function(sai_bcm_unit_test name)
+    add_executable(${name} tests/${name}.c)
+    target_include_directories(${name} PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${SAI_INC_DIR}
+        ${OBCM_INC}
+        ${CMAKE_SOURCE_DIR}/tests)
+    target_link_libraries(${name} PRIVATE sai_bcm_static)
+    set_target_properties(${name} PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED ON)
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+if(SAI_BCM_BACKEND_IS_MOCK)
+    sai_bcm_unit_test(test_oid)
+    sai_bcm_unit_test(test_switch)
+    sai_bcm_unit_test(test_port)
+endif()
 
 add_executable(smoke_load tests/smoke_load.c)
 target_link_libraries(smoke_load PRIVATE ${CMAKE_DL_LIBS})

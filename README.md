@@ -9,23 +9,28 @@ set differ.
 
 See [PLAN.md](./PLAN.md) for the full design and roadmap.
 
-## Status: Phase 0 (bring-up)
+## Status
 
 | What | State |
 |---|---|
-| SAI v1.6.4 headers vendored (`SAI/inc/`) | done |
+| SAI v1.6.4 + OpenBCM submodules pinned | done |
 | CMake build with `SAI_BCM_TARGET` selector | done |
-| Loadable `libsai.so` exporting the 8 SAI entry points | done |
-| `sai_api_query()` dispatch over 44 zero-init module vtables | done |
-| `dlopen` smoke test + CTest | done |
-| Docker + CI | done |
-| Real `bcm_*` integration (P1+) | not started |
+| `libsai.so` exporting exactly the 8 SAI entry points | done |
+| `sai_api_query()` dispatch over all 44 module vtables | done |
+| OID encoding `[switch:8][type:8][index:48]` + tests | done |
+| BCM error -> SAI status mapping | done |
+| **P1 Switch API** (`bcm_init`/`bcm_detach`, port enumeration via `bcm_port_config_get`, port number/list, profile, src mac, notifications) | done |
+| **P1 Port API** (admin/speed/MTU/autoneg/FEC get+set, oper status, stats get/clear via `bcm_stat_*`) | done |
+| Mock BCM backend (32 XE ports + CPU) + unit tests | done |
+| L2 (VLAN/bridge/FDB/LAG), L3 (VRF/RIF/route/neighbor) | P2/P3, not started |
+| Real OpenBCM archive link (`SAI_BCM_BACKEND=openbcm`) | wired, needs SDK build |
 
 Only the 8 SAI ABI symbols (`sai_api_initialize`, `sai_api_query`,
 `sai_api_uninitialize`, `sai_log_set`, `sai_object_type_query`,
 `sai_switch_id_query`, `sai_dbg_generate_dump`,
-`sai_object_type_get_availability`) are exported; everything else is local to
-the shared object (enforced by `cmake/sai_bcm.ver`).
+`sai_object_type_get_availability`) are exported; everything else (including
+the mock `bcm_*` backend in dev builds) is local to the shared object
+(`cmake/sai_bcm.ver`).
 
 ## Targets
 
@@ -34,23 +39,16 @@ the shared object (enforced by `cmake/sai_bcm.ver`).
 | **initial** | **BCM56371** (Firebolt6, `0xb371`) | `BCM_56370_A0=1` | Classic **ESW** |
 | follow-on | Trident 3-X | `BCM_56880_A0=1` | **LTSW / XFS** |
 
-## Build (P0, stubs only)
+## Backends
 
-```sh
-cmake -S . -B build -DSAI_BCM_TARGET=BCM56371 -DSA_BCM_BUILD_OPENBCM=OFF
-cmake --build build
-ctest --test-dir build --output-on-failure
-./build/smoke_load ./build/libsai.so
-```
+| Backend | What it links | Use |
+|---|---|---|
+| `mock` (default) | `tests/mock/mock_bcm.c` simulated device (32 XE ports + CPU) | dev + CI; unit tests run without hardware |
+| `openbcm` | real OpenBCM sdk-6.5.27 archives (needs `SAI_BCM_BUILD_OPENBCM=ON`) | production |
 
-## Build (P1+, with OpenBCM linked)
-
-```sh
-git submodule update --init --recursive        # fetches OpenBCM sdk-6.5.27
-./scripts/obcm_build.sh BCM56371                # builds libfirebolt6 + ESW set
-cmake -S . -B build -DSAI_BCM_TARGET=BCM56371 -DSA_BCM_BUILD_OPENBCM=ON
-cmake --build build
-```
+In both modes the adapter is **compiled against the real OpenBCM headers**
+from the `OpenBCM/sdk-6.5.27/include` submodule tree, so declarations are
+always checked against the actual SDK.
 
 ## Submodules
 
@@ -78,16 +76,46 @@ git submodule init && git submodule absorbgitdirs
 The partial/sparse population is a local working-tree concern only — the
 recorded gitlink SHA is identical either way.
 
+## Build (mock backend, no hardware needed)
+
+```sh
+git submodule update --init --recursive
+cmake -S . -B build -DSAI_BCM_TARGET=BCM56371 -DSAI_BCM_BACKEND=mock
+cmake --build build
+ctest --test-dir build --output-on-failure
+./build/smoke_load ./build/libsai.so
+```
+
+## Build (P1+, with real OpenBCM archives)
+
+```sh
+git submodule update --init --recursive        # fetches OpenBCM sdk-6.5.27
+./scripts/obcm_build.sh BCM56371                # builds libfirebolt6 + ESW set
+cmake -S . -B build \
+    -DSAI_BCM_TARGET=BCM56371 \
+    -DSAI_BCM_BACKEND=openbcm \
+    -DSA_BCM_BUILD_OPENBCM=ON
+cmake --build build
+```
+
 ## Layout
 
 ```
-SAI/                      vendored SAI v1.6.4 inc/ headers (submodule)
-OpenBCM/                  OpenBCM sdk-6.5.27 (submodule, P1+)
-include/                  internal headers (X-macro module table)
-src/sai_bcm_api.c         SAI entry points + api_query dispatch
-src/sai_bcm_stubs.c       44 zero-init module vtables (P0; replaced per-module in P1)
-src/sai_bcm_log.c         logging + status mapping
-tests/smoke_load.c        dlopen + 44-table enumeration test
+SAI/                      SAI v1.6.4 headers (submodule)
+OpenBCM/                  OpenBCM sdk-6.5.27 (submodule)
+include/sai_bcm_api_tables.x  X-macro registry of the 44 SAI modules
+include/sai_bcm_oid.h     OID encode/decode ([switch:8][type:8][index:48])
+include/sai_bcm_internal.h  shared state, lock, cross-module accessors
+src/sai_bcm_api.c         SAI entry points + api_query dispatch + queries
+src/sai_bcm_switch.c      Switch API: create/remove/attrs (bcm_init/config_get)
+src/sai_bcm_port.c         Port API: attrs + stats (bcm_port_*/bcm_stat_*)
+src/sai_bcm_stubs.c        zero-init vtables for not-yet-implemented modules
+src/sai_bcm_log.c          logging + bcm_err -> sai_status mapping
+tests/mock/mock_bcm.c     mock BCM backend (dev/CI only)
+tests/test_oid.c          OID encoding unit tests
+tests/test_switch.c       Switch API tests over the mock backend
+tests/test_port.c         Port API tests over the mock backend
+tests/smoke_load.c        dlopen + 44-table enumeration ABI test
 cmake/                    version script + per-target Make.local drivers
 scripts/obcm_build.sh     OpenBCM SDK build driver (P1+)
 ```
