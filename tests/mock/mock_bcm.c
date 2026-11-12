@@ -3,6 +3,7 @@
  */
 #include "mock_bcm.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include <shared/error.h>
@@ -10,6 +11,7 @@
 #include <bcm/trunk.h>
 #include <bcm/l2.h>
 #include <bcm/vswitch.h>
+#include <bcm/l3.h>
 
 /* ---- L2 simulation state (defined fully below, sized here so that
  * mock_bcm_reset can clear them) ---- */
@@ -38,6 +40,24 @@ struct mock_l2_entry {
 };
 
 static struct mock_l2_entry g_l2[MOCK_BCM_L2_ENTRIES];
+
+/* L3 simulation state (defined in the L3 section below) */
+#define MOCK_BCM_L3_EGRESS_MAX  1024
+#define MOCK_BCM_L3_ECMP_MAX    256
+#define MOCK_BCM_L3_ROUTE_MAX   1024
+#define MOCK_BCM_L3_HOST_MAX    1024
+
+struct mock_l3_ingress { uint8_t used; bcm_vrf_t vrf; };
+struct mock_l3_egress  { uint8_t used; bcm_vlan_t vlan; int port; int trunk; };
+struct mock_l3_ecmp    { uint8_t used; int member[MOCK_BCM_L3_EGRESS_MAX]; int member_count; };
+struct mock_l3_route   { uint8_t used; uint8_t is_v6; bcm_vrf_t vrf; uint32_t subnet; uint32_t mask; uint8_t ip6_net[16]; uint8_t ip6_mask[16]; bcm_if_t intf; };
+struct mock_l3_host    { uint8_t used; uint8_t is_v6; bcm_vrf_t vrf; uint32_t ip; uint8_t ip6[16]; bcm_if_t intf; };
+
+static struct mock_l3_ingress g_l3_ingress[MOCK_BCM_L3_EGRESS_MAX];
+static struct mock_l3_egress  g_l3_egress[MOCK_BCM_L3_EGRESS_MAX];
+static struct mock_l3_ecmp    g_l3_ecmp[MOCK_BCM_L3_ECMP_MAX];
+static struct mock_l3_route   g_l3_route[MOCK_BCM_L3_ROUTE_MAX];
+static struct mock_l3_host    g_l3_host[MOCK_BCM_L3_HOST_MAX];
 
 /*
  * bcm_errmsg() dereferences the _shr_errmsg[] table normally provided by
@@ -116,6 +136,11 @@ void mock_bcm_reset(void)
     memset(g_l2, 0, sizeof(g_l2));
     memset(g_vswitch_used, 0, sizeof(g_vswitch_used));
     memset(g_vswitch_port, 0, sizeof(g_vswitch_port));
+    memset(g_l3_ingress, 0, sizeof(g_l3_ingress));
+    memset(g_l3_egress, 0, sizeof(g_l3_egress));
+    memset(g_l3_ecmp, 0, sizeof(g_l3_ecmp));
+    memset(g_l3_route, 0, sizeof(g_l3_route));
+    memset(g_l3_host, 0, sizeof(g_l3_host));
 }
 
 int mock_bcm_init_count(void)
@@ -1031,6 +1056,453 @@ int mock_bcm_vswitch_member_count(int vsi)
     }
     for (int p = 0; p < MOCK_BCM_MAX_PORTS; p++) {
         if (g_vswitch_port[vsi][p]) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* =========================================================================
+ * L3 simulation (ingress if, egress objects, ECMP, routes, hosts)
+ * ========================================================================= */
+static int mock_id_alloc(void *arr, size_t elem, int max, uint8_t *used_off)
+{
+    (void)arr; (void)elem;
+    for (int i = 0; i < max; i++) {
+        uint8_t *u = (uint8_t *)((char *)arr + (size_t)i * elem + *used_off);
+        if (!*u) {
+            *u = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void bcm_l3_ingress_t_init(bcm_l3_ingress_t *ing)
+{
+    if (ing == NULL) {
+        return;
+    }
+    memset(ing, 0, sizeof(*ing));
+}
+
+int bcm_l3_ingress_create(int unit, bcm_l3_ingress_t *ing,
+                          bcm_if_t *intf_id)
+{
+    if (unit != 0 || ing == NULL || intf_id == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    size_t elem = sizeof(g_l3_ingress[0]);
+    uint8_t off = offsetof(struct mock_l3_ingress, used);
+    int id = mock_id_alloc(g_l3_ingress, elem, MOCK_BCM_L3_EGRESS_MAX, &off);
+    if (id < 0) {
+        return BCM_E_FULL;
+    }
+    g_l3_ingress[id].vrf = ing->vrf;
+    *intf_id = (bcm_if_t)id;
+    return BCM_E_NONE;
+}
+
+int bcm_l3_ingress_destroy(int unit, bcm_if_t intf_id)
+{
+    if (unit != 0) {
+        return BCM_E_UNIT;
+    }
+    if (intf_id < 0 || intf_id >= MOCK_BCM_L3_EGRESS_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_l3_ingress[intf_id].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    memset(&g_l3_ingress[intf_id], 0, sizeof(g_l3_ingress[intf_id]));
+    return BCM_E_NONE;
+}
+
+int mock_bcm_l3_ingress_exists(int intf_id)
+{
+    return (intf_id >= 0 && intf_id < MOCK_BCM_L3_EGRESS_MAX)
+               ? g_l3_ingress[intf_id].used
+               : 0;
+}
+
+void bcm_l3_egress_t_init(bcm_l3_egress_t *egr)
+{
+    if (egr == NULL) {
+        return;
+    }
+    memset(egr, 0, sizeof(*egr));
+}
+
+int bcm_l3_egress_create(int unit, uint32 flags, bcm_l3_egress_t *egr,
+                         bcm_if_t *if_id)
+{
+    if (unit != 0 || egr == NULL || if_id == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    (void)flags;
+    size_t elem = sizeof(g_l3_egress[0]);
+    uint8_t off = offsetof(struct mock_l3_egress, used);
+    int id = mock_id_alloc(g_l3_egress, elem, MOCK_BCM_L3_EGRESS_MAX, &off);
+    if (id < 0) {
+        return BCM_E_FULL;
+    }
+    g_l3_egress[id].vlan = egr->vlan;
+    if (egr->flags & BCM_L3_TGID) {
+        g_l3_egress[id].port = -1;
+        g_l3_egress[id].trunk = egr->trunk;
+    } else {
+        g_l3_egress[id].port = egr->port;
+        g_l3_egress[id].trunk = -1;
+    }
+    *if_id = (bcm_if_t)id;
+    return BCM_E_NONE;
+}
+
+int bcm_l3_egress_destroy(int unit, bcm_if_t if_id)
+{
+    if (unit != 0) {
+        return BCM_E_UNIT;
+    }
+    if (if_id < 0 || if_id >= MOCK_BCM_L3_EGRESS_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_l3_egress[if_id].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    memset(&g_l3_egress[if_id], 0, sizeof(g_l3_egress[if_id]));
+    return BCM_E_NONE;
+}
+
+int mock_bcm_l3_egress_exists(int if_id)
+{
+    return (if_id >= 0 && if_id < MOCK_BCM_L3_EGRESS_MAX)
+               ? g_l3_egress[if_id].used
+               : 0;
+}
+
+int mock_bcm_l3_egress_count(void)
+{
+    int n = 0;
+    for (int i = 0; i < MOCK_BCM_L3_EGRESS_MAX; i++) {
+        if (g_l3_egress[i].used) {
+            n++;
+        }
+    }
+    return n;
+}
+
+int mock_bcm_l3_egress_vlan(int if_id)
+{
+    if (if_id >= 0 && if_id < MOCK_BCM_L3_EGRESS_MAX &&
+        g_l3_egress[if_id].used) {
+        return (int)g_l3_egress[if_id].vlan;
+    }
+    return -1;
+}
+
+int mock_bcm_l3_egress_is_trunk(int if_id)
+{
+    if (if_id >= 0 && if_id < MOCK_BCM_L3_EGRESS_MAX &&
+        g_l3_egress[if_id].used) {
+        return g_l3_egress[if_id].port == -1 ? 1 : 0;
+    }
+    return -1;
+}
+
+void bcm_l3_egress_ecmp_t_init(bcm_l3_egress_ecmp_t *ecmp)
+{
+    if (ecmp == NULL) {
+        return;
+    }
+    memset(ecmp, 0, sizeof(*ecmp));
+}
+
+int bcm_l3_egress_ecmp_create(int unit, bcm_l3_egress_ecmp_t *ecmp,
+                              int intf_count, bcm_if_t *intf_array)
+{
+    if (unit != 0 || ecmp == NULL || intf_count < 0 ||
+        (intf_count > 0 && intf_array == NULL)) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    for (int t = 0; t < MOCK_BCM_L3_ECMP_MAX; t++) {
+        if (!g_l3_ecmp[t].used) {
+            g_l3_ecmp[t].used = 1;
+            g_l3_ecmp[t].member_count = 0;
+            for (int i = 0; i < intf_count; i++) {
+                int id = (int)intf_array[i];
+                if (id < 0 || id >= MOCK_BCM_L3_EGRESS_MAX ||
+                    !g_l3_egress[id].used) {
+                    return BCM_E_PARAM;
+                }
+                g_l3_ecmp[t].member[id] = 1;
+                g_l3_ecmp[t].member_count++;
+            }
+            ecmp->ecmp_intf = (bcm_if_t)t;
+            return BCM_E_NONE;
+        }
+    }
+    return BCM_E_FULL;
+}
+
+int bcm_l3_egress_ecmp_destroy(int unit, bcm_l3_egress_ecmp_t *ecmp)
+{
+    if (unit != 0 || ecmp == NULL) {
+        return BCM_E_PARAM;
+    }
+    int t = (int)ecmp->ecmp_intf;
+    if (t < 0 || t >= MOCK_BCM_L3_ECMP_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_l3_ecmp[t].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    memset(&g_l3_ecmp[t], 0, sizeof(g_l3_ecmp[t]));
+    return BCM_E_NONE;
+}
+
+int bcm_l3_egress_ecmp_add(int unit, bcm_l3_egress_ecmp_t *ecmp,
+                          bcm_if_t intf)
+{
+    if (unit != 0 || ecmp == NULL) {
+        return BCM_E_PARAM;
+    }
+    int t = (int)ecmp->ecmp_intf;
+    int id = (int)intf;
+    if (t < 0 || t >= MOCK_BCM_L3_ECMP_MAX || id < 0 ||
+        id >= MOCK_BCM_L3_EGRESS_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_l3_ecmp[t].used || !g_l3_egress[id].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    if (g_l3_ecmp[t].member[id]) {
+        return BCM_E_EXISTS;
+    }
+    g_l3_ecmp[t].member[id] = 1;
+    g_l3_ecmp[t].member_count++;
+    return BCM_E_NONE;
+}
+
+int bcm_l3_egress_ecmp_delete(int unit, bcm_l3_egress_ecmp_t *ecmp,
+                             bcm_if_t intf)
+{
+    if (unit != 0 || ecmp == NULL) {
+        return BCM_E_PARAM;
+    }
+    int t = (int)ecmp->ecmp_intf;
+    int id = (int)intf;
+    if (t < 0 || t >= MOCK_BCM_L3_ECMP_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_l3_ecmp[t].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    if (!g_l3_ecmp[t].member[id]) {
+        return BCM_E_NOT_FOUND;
+    }
+    g_l3_ecmp[t].member[id] = 0;
+    g_l3_ecmp[t].member_count--;
+    return BCM_E_NONE;
+}
+
+int mock_bcm_l3_ecmp_exists(int intf_id)
+{
+    return (intf_id >= 0 && intf_id < MOCK_BCM_L3_ECMP_MAX)
+               ? g_l3_ecmp[intf_id].used
+               : 0;
+}
+
+int mock_bcm_l3_ecmp_member_count(int intf_id)
+{
+    if (intf_id >= 0 && intf_id < MOCK_BCM_L3_ECMP_MAX &&
+        g_l3_ecmp[intf_id].used) {
+        return g_l3_ecmp[intf_id].member_count;
+    }
+    return -1;
+}
+
+void bcm_l3_route_t_init(bcm_l3_route_t *info)
+{
+    if (info == NULL) {
+        return;
+    }
+    memset(info, 0, sizeof(*info));
+}
+
+static struct mock_l3_route *l3_route_find(const bcm_l3_route_t *info)
+{
+    for (int i = 0; i < MOCK_BCM_L3_ROUTE_MAX; i++) {
+        struct mock_l3_route *r = &g_l3_route[i];
+        if (!r->used || r->vrf != info->l3a_vrf) {
+            continue;
+        }
+        if ((info->l3a_flags & BCM_L3_IP6) != (r->is_v6 ? BCM_L3_IP6 : 0)) {
+            continue;
+        }
+        if (info->l3a_flags & BCM_L3_IP6) {
+            if (memcmp(r->ip6_net, info->l3a_ip6_net, 16) == 0 &&
+                memcmp(r->ip6_mask, info->l3a_ip6_mask, 16) == 0) {
+                return r;
+            }
+        } else {
+            if (r->subnet == info->l3a_subnet && r->mask == info->l3a_ip_mask) {
+                return r;
+            }
+        }
+    }
+    return NULL;
+}
+
+int bcm_l3_route_add(int unit, bcm_l3_route_t *info)
+{
+    if (unit != 0 || info == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    struct mock_l3_route *r = l3_route_find(info);
+    if (r == NULL) {
+        for (int i = 0; i < MOCK_BCM_L3_ROUTE_MAX; i++) {
+            if (!g_l3_route[i].used) {
+                r = &g_l3_route[i];
+                break;
+            }
+        }
+    }
+    if (r == NULL) {
+        return BCM_E_FULL;
+    }
+    memset(r, 0, sizeof(*r));
+    r->used = 1;
+    r->is_v6 = (info->l3a_flags & BCM_L3_IP6) ? 1 : 0;
+    r->vrf = info->l3a_vrf;
+    r->subnet = info->l3a_subnet;
+    r->mask = info->l3a_ip_mask;
+    memcpy(r->ip6_net, info->l3a_ip6_net, 16);
+    memcpy(r->ip6_mask, info->l3a_ip6_mask, 16);
+    r->intf = info->l3a_intf;
+    return BCM_E_NONE;
+}
+
+int bcm_l3_route_delete(int unit, bcm_l3_route_t *info)
+{
+    if (unit != 0 || info == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    struct mock_l3_route *r = l3_route_find(info);
+    if (r == NULL) {
+        return BCM_E_NOT_FOUND;
+    }
+    memset(r, 0, sizeof(*r));
+    return BCM_E_NONE;
+}
+
+int mock_bcm_l3_route_count(int vrf)
+{
+    int n = 0;
+    for (int i = 0; i < MOCK_BCM_L3_ROUTE_MAX; i++) {
+        if (g_l3_route[i].used && g_l3_route[i].vrf == vrf) {
+            n++;
+        }
+    }
+    return n;
+}
+
+void bcm_l3_host_t_init(bcm_l3_host_t *host)
+{
+    if (host == NULL) {
+        return;
+    }
+    memset(host, 0, sizeof(*host));
+}
+
+static struct mock_l3_host *l3_host_find(const bcm_l3_host_t *host)
+{
+    for (int i = 0; i < MOCK_BCM_L3_HOST_MAX; i++) {
+        struct mock_l3_host *h = &g_l3_host[i];
+        if (!h->used || h->vrf != host->l3a_vrf) {
+            continue;
+        }
+        if ((host->l3a_flags & BCM_L3_IP6) != (h->is_v6 ? BCM_L3_IP6 : 0)) {
+            continue;
+        }
+        if (host->l3a_flags & BCM_L3_IP6) {
+            if (memcmp(h->ip6, host->l3a_ip6_addr, 16) == 0) {
+                return h;
+            }
+        } else {
+            if (h->ip == host->l3a_ip_addr) {
+                return h;
+            }
+        }
+    }
+    return NULL;
+}
+
+int bcm_l3_host_add(int unit, bcm_l3_host_t *info)
+{
+    if (unit != 0 || info == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    struct mock_l3_host *h = l3_host_find(info);
+    if (h == NULL) {
+        for (int i = 0; i < MOCK_BCM_L3_HOST_MAX; i++) {
+            if (!g_l3_host[i].used) {
+                h = &g_l3_host[i];
+                break;
+            }
+        }
+    }
+    if (h == NULL) {
+        return BCM_E_FULL;
+    }
+    memset(h, 0, sizeof(*h));
+    h->used = 1;
+    h->is_v6 = (info->l3a_flags & BCM_L3_IP6) ? 1 : 0;
+    h->vrf = info->l3a_vrf;
+    h->ip = info->l3a_ip_addr;
+    memcpy(h->ip6, info->l3a_ip6_addr, 16);
+    h->intf = info->l3a_intf;
+    return BCM_E_NONE;
+}
+
+int bcm_l3_host_delete(int unit, bcm_l3_host_t *info)
+{
+    if (unit != 0 || info == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    struct mock_l3_host *h = l3_host_find(info);
+    if (h == NULL) {
+        return BCM_E_NOT_FOUND;
+    }
+    memset(h, 0, sizeof(*h));
+    return BCM_E_NONE;
+}
+
+int mock_bcm_l3_host_count(int vrf)
+{
+    int n = 0;
+    for (int i = 0; i < MOCK_BCM_L3_HOST_MAX; i++) {
+        if (g_l3_host[i].used && g_l3_host[i].vrf == vrf) {
             n++;
         }
     }

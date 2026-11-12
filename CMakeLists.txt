@@ -92,6 +92,12 @@ add_library(sai_bcm_obj OBJECT
     src/sai_bcm_vlan.c
     src/sai_bcm_lag.c
     src/sai_bcm_fdb.c
+    src/sai_bcm_virtual_router.c
+    src/sai_bcm_router_interface.c
+    src/sai_bcm_nexthop.c
+    src/sai_bcm_nexthopgroup.c
+    src/sai_bcm_route.c
+    src/sai_bcm_neighbor.c
     src/sai_bcm_stubs.c
     src/sai_bcm_log.c
 )
@@ -110,12 +116,16 @@ target_include_directories(sai_bcm_obj
 target_compile_definitions(sai_bcm_obj PRIVATE
     SAI_BCM_TARGET_NAME="${SAI_BCM_TARGET}"
     SAI_BCM_OBCM_CHIP_MACRO="${SAI_BCM_OBCM_CHIP_MACRO}"
-    SAI_BCM_OBCM_STACK="${SAI_BCM_OBCM_STACK}")
+    SAI_BCM_OBCM_STACK="${SAI_BCM_OBCM_STACK}"
+    # OpenBCM gates bcm/l3.h (and the L3 interop sections of l2.h/vlan.h)
+    # behind this feature flag; the SDK build passes it for XGS targets.
+    INCLUDE_L3)
 
 if(SAI_BCM_BACKEND_IS_MOCK)
     add_library(sai_bcm_mock STATIC tests/mock/mock_bcm.c)
     target_include_directories(sai_bcm_mock PRIVATE
         ${CMAKE_SOURCE_DIR}/tests/mock ${OBCM_INC})
+    target_compile_definitions(sai_bcm_mock PRIVATE INCLUDE_L3)
     set_target_properties(sai_bcm_mock PROPERTIES
         C_STANDARD 11 C_STANDARD_REQUIRED ON)
 endif()
@@ -185,6 +195,7 @@ function(sai_bcm_unit_test name)
         ${OBCM_INC}
         ${CMAKE_SOURCE_DIR}/tests)
     target_link_libraries(${name} PRIVATE sai_bcm_static)
+    target_compile_definitions(${name} PRIVATE INCLUDE_L3)
     set_target_properties(${name} PROPERTIES
         C_STANDARD 11 C_STANDARD_REQUIRED ON)
     add_test(NAME ${name} COMMAND ${name})
@@ -195,6 +206,7 @@ if(SAI_BCM_BACKEND_IS_MOCK)
     sai_bcm_unit_test(test_switch)
     sai_bcm_unit_test(test_port)
     sai_bcm_unit_test(test_l2)
+    sai_bcm_unit_test(test_l3)
 endif()
 
 add_executable(smoke_load tests/smoke_load.c)

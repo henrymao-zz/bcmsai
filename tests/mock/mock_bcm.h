@@ -64,6 +64,23 @@ int mock_bcm_l2_is_static(int port, const uint8_t mac[6], int vid);
 int mock_bcm_l2_dest_is_trunk(int port, const uint8_t mac[6], int vid,
                               int *tgid);
 
+/* ---- L3 ---- */
+#define MOCK_BCM_L3_EGRESS_MAX  1024
+#define MOCK_BCM_L3_ECMP_MAX    256
+#define MOCK_BCM_L3_ROUTE_MAX   1024
+#define MOCK_BCM_L3_HOST_MAX    1024
+
+int mock_bcm_l3_ingress_exists(int intf_id);
+int mock_bcm_l3_egress_count(void);
+/* 0 = gone, 1 = exists */
+int mock_bcm_l3_egress_exists(int intf_id);
+int mock_bcm_l3_egress_vlan(int intf_id);
+int mock_bcm_l3_egress_is_trunk(int intf_id);
+int mock_bcm_l3_ecmp_exists(int intf_id);
+int mock_bcm_l3_ecmp_member_count(int intf_id);
+int mock_bcm_l3_route_count(int vrf);
+int mock_bcm_l3_host_count(int vrf);
+
 /* ---- vswitch ---- */
 int mock_bcm_vswitch_used(int vsi);
 int mock_bcm_vswitch_member_count(int vsi);

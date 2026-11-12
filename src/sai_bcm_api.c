@@ -10,6 +10,7 @@
 
 #include "sai_bcm_internal.h"
 #include "sai_bcm_l2.h"
+#include "sai_bcm_l3.h"
 
 #include <string.h>
 
@@ -92,6 +93,7 @@ sai_status_t sai_api_uninitialize(void)
                     "uninitialize with live switch; detaching");
         (void)bcm_detach(g_sai_bcm_sw.unit);
         sai_bcm_bridge_deinit();
+        sai_bcm_vr_deinit();
         memset(&g_sai_bcm_sw, 0, sizeof(g_sai_bcm_sw));
         g_sai_bcm_sw.unit = SAI_BCM_UNIT_DEFAULT;
     }

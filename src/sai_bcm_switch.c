@@ -7,6 +7,7 @@
  */
 #include "sai_bcm_internal.h"
 #include "sai_bcm_l2.h"
+#include "sai_bcm_l3.h"
 
 #include <string.h>
 
@@ -171,6 +172,16 @@ static sai_status_t create_switch(sai_object_id_t *switch_id,
         return st;
     }
 
+    /* Default virtual router (vrf 0). */
+    st = sai_bcm_vr_init();
+    if (st != SAI_STATUS_SUCCESS) {
+        SAI_BCM_LOG(SAI_LOG_LEVEL_ERROR, "vr init failed: 0x%x", st);
+        sai_bcm_bridge_deinit();
+        (void)bcm_detach(g_sai_bcm_sw.unit);
+        sai_bcm_unlock();
+        return st;
+    }
+
     g_sai_bcm_sw.switch_oid = sai_bcm_oid_encode(
         SAI_BCM_SWITCH_INSTANCE_FIRST, SAI_OBJECT_TYPE_SWITCH, 0);
     g_sai_bcm_sw.created = true;
@@ -203,6 +214,7 @@ static sai_status_t remove_switch(sai_object_id_t switch_id)
     }
 
     sai_bcm_bridge_deinit();
+    sai_bcm_vr_deinit();
     memset(&g_sai_bcm_sw, 0, sizeof(g_sai_bcm_sw));
     g_sai_bcm_sw.unit = SAI_BCM_UNIT_DEFAULT;
 
@@ -303,6 +315,13 @@ static sai_status_t get_switch_attribute(sai_object_id_t switch_id,
                 st = SAI_STATUS_ITEM_NOT_FOUND;
             } else {
                 attr->value.oid = g_sai_bcm_default_1q_bridge_oid;
+            }
+            break;
+        case SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID:
+            if (g_sai_bcm_default_vr_oid == SAI_NULL_OBJECT_ID) {
+                st = SAI_STATUS_ITEM_NOT_FOUND;
+            } else {
+                attr->value.oid = g_sai_bcm_default_vr_oid;
             }
             break;
         case SAI_SWITCH_ATTR_SRC_MAC_ADDRESS:

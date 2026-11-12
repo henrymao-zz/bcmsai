@@ -26,7 +26,11 @@ See [PLAN.md](./PLAN.md) for the full design and roadmap.
 | **P2 VLAN API** (create/remove, members via bridge ports + `bcm_vlan_gport_*`, tagging, member list) | done |
 | **P2 LAG API** (`bcm_trunk_create/destroy/member_add/delete`, PORT_LIST) | done |
 | **P2 FDB API** (`bcm_l2_addr_*` add/remove/set/get, flush by vlan/port/trunk) | done |
-| L3 (VRF/RIF/route/neighbor) | P3, not started |
+| **P3 Virtual Router** (internal vrf pool — OpenBCM has no vrf create; default VR via `SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID`) | done |
+| **P3 Router Interface** (PORT/VLAN RIFs via `bcm_l3_ingress_create`) | done |
+| **P3 Next Hop / Group** (`bcm_l3_egress_create`, lazy ECMP via `bcm_l3_egress_ecmp_*`) | done |
+| **P3 Route / Neighbor** (`bcm_l3_route_add/delete`, `bcm_l3_host_add/delete`) | done |
+| Hostif (KNET), basic ACL, minimal QoS | P4, not started |
 | Real OpenBCM archive link (`SAI_BCM_BACKEND=openbcm`) | wired, needs SDK build |
 
 Only the 8 SAI ABI symbols (`sai_api_initialize`, `sai_api_query`,
@@ -117,6 +121,12 @@ src/sai_bcm_bridge.c       Bridge API: default 1Q bridge, 1D via bcm_vswitch_*
 src/sai_bcm_vlan.c         VLAN API: bcm_vlan_*, members via bridge ports
 src/sai_bcm_lag.c          LAG API: bcm_trunk_*
 src/sai_bcm_fdb.c          FDB API: bcm_l2_addr_*, flush by vlan/port/trunk
+src/sai_bcm_virtual_router.c  VR API: internal vrf pool (OpenBCM vrfs are implicit ids)
+src/sai_bcm_router_interface.c RIF API: bcm_l3_ingress_create (PORT/VLAN RIFs)
+src/sai_bcm_nexthop.c      NH API: bcm_l3_egress_create (IP next hops)
+src/sai_bcm_nexthopgroup.c NHG API: lazy ECMP via bcm_l3_egress_ecmp_*
+src/sai_bcm_route.c        Route API: bcm_l3_route_add/delete (v4+v6)
+src/sai_bcm_neighbor.c     Neighbor API: bcm_l3_host_add/delete
 src/sai_bcm_oid.c          per-type object index allocator
 src/sai_bcm_stubs.c        zero-init vtables for not-yet-implemented modules
 src/sai_bcm_log.c          logging + bcm_err -> sai_status mapping
@@ -125,6 +135,7 @@ tests/test_oid.c          OID encoding unit tests
 tests/test_switch.c       Switch API tests over the mock backend
 tests/test_port.c         Port API tests over the mock backend
 tests/test_l2.c           VLAN/Bridge/LAG/FDB tests over the mock backend
+tests/test_l3.c           VR/RIF/NH/NHG/Route/Neighbor tests over the mock backend
 tests/smoke_load.c        dlopen + 44-table enumeration ABI test
 cmake/                    version script + per-target Make.local drivers
 scripts/obcm_build.sh     OpenBCM SDK build driver (P1+)
