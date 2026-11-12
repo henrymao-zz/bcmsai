@@ -81,6 +81,23 @@ int mock_bcm_l3_ecmp_member_count(int intf_id);
 int mock_bcm_l3_route_count(int vrf);
 int mock_bcm_l3_host_count(int vrf);
 
+/* ---- rx traps / knet / field / qos ---- */
+#define MOCK_BCM_TRAP_MAX        128
+#define MOCK_BCM_KNETIF_MAX      32
+#define MOCK_BCM_FIELD_GROUP_MAX 32
+#define MOCK_BCM_FIELD_ENTRY_MAX 256
+#define MOCK_BCM_QOS_MAP_MAX     512
+
+int mock_bcm_trap_used(int trap_id);
+int mock_bcm_trap_count(void);
+int mock_bcm_knetif_count(void);
+int mock_bcm_field_group_count(void);
+int mock_bcm_field_group_has_entry(int group_id);
+int mock_bcm_field_entry_installed(int entry_id);
+/* returns 1 when the entry carries bcmFieldActionDrop */
+int mock_bcm_field_entry_drops(int entry_id);
+int mock_bcm_qos_map_count(void);
+
 /* ---- vswitch ---- */
 int mock_bcm_vswitch_used(int vsi);
 int mock_bcm_vswitch_member_count(int vsi);

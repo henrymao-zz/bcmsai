@@ -4,6 +4,7 @@
 #include "mock_bcm.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <shared/error.h>
@@ -52,6 +53,28 @@ struct mock_l3_egress  { uint8_t used; bcm_vlan_t vlan; int port; int trunk; };
 struct mock_l3_ecmp    { uint8_t used; int member[MOCK_BCM_L3_EGRESS_MAX]; int member_count; };
 struct mock_l3_route   { uint8_t used; uint8_t is_v6; bcm_vrf_t vrf; uint32_t subnet; uint32_t mask; uint8_t ip6_net[16]; uint8_t ip6_mask[16]; bcm_if_t intf; };
 struct mock_l3_host    { uint8_t used; uint8_t is_v6; bcm_vrf_t vrf; uint32_t ip; uint8_t ip6[16]; bcm_if_t intf; };
+
+/* RX trap / knet / field / qos mock state (defined in the P4 section) */
+#define MOCK_BCM_TRAP_MAX        128
+#define MOCK_BCM_KNETIF_MAX      32
+#define MOCK_BCM_FIELD_GROUP_MAX 32
+#define MOCK_BCM_FIELD_ENTRY_MAX 256
+#define MOCK_BCM_QOS_MAP_MAX     512
+
+struct mock_rx_trap { uint8_t used; int type; uint32_t flags; };
+struct mock_knet_netif { uint8_t used; int id; char name[16]; int vlan; int port; };
+struct mock_field_entry { uint8_t used; int group_id; uint8_t installed; uint8_t has_drop;
+                          uint16_t ether_type; uint8_t has_ether_type;
+                          uint8_t has_src_mac; uint8_t has_dst_mac;
+                          uint8_t has_in_port; uint8_t in_port; };
+struct mock_field_group { uint8_t used; int id; };
+struct mock_qos_map { uint8_t used; int dscp; int int_pri; };
+
+static struct mock_rx_trap     g_rx_trap[MOCK_BCM_TRAP_MAX];
+static struct mock_knet_netif  g_knetif[MOCK_BCM_KNETIF_MAX];
+static struct mock_field_group g_fgroup[MOCK_BCM_FIELD_GROUP_MAX];
+static struct mock_field_entry g_fentry[MOCK_BCM_FIELD_ENTRY_MAX];
+static struct mock_qos_map     g_qos_map[MOCK_BCM_QOS_MAP_MAX];
 
 static struct mock_l3_ingress g_l3_ingress[MOCK_BCM_L3_EGRESS_MAX];
 static struct mock_l3_egress  g_l3_egress[MOCK_BCM_L3_EGRESS_MAX];
@@ -141,6 +164,11 @@ void mock_bcm_reset(void)
     memset(g_l3_ecmp, 0, sizeof(g_l3_ecmp));
     memset(g_l3_route, 0, sizeof(g_l3_route));
     memset(g_l3_host, 0, sizeof(g_l3_host));
+    memset(g_rx_trap, 0, sizeof(g_rx_trap));
+    memset(g_knetif, 0, sizeof(g_knetif));
+    memset(g_fgroup, 0, sizeof(g_fgroup));
+    memset(g_fentry, 0, sizeof(g_fentry));
+    memset(g_qos_map, 0, sizeof(g_qos_map));
 }
 
 int mock_bcm_init_count(void)
@@ -1503,6 +1531,408 @@ int mock_bcm_l3_host_count(int vrf)
     int n = 0;
     for (int i = 0; i < MOCK_BCM_L3_HOST_MAX; i++) {
         if (g_l3_host[i].used && g_l3_host[i].vrf == vrf) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* =========================================================================
+ * RX trap / KNET / field (ACL) / QoS map simulation
+ * ========================================================================= */
+
+/* SAL declares sal_memset weak (sal/core/libc.h); the SDK library normally
+ * provides it. Supply the trivial definition for mock builds. */
+void *sal_memset(void *s, int c, size_t n)
+{
+    return memset(s, c, n);
+}
+#include <bcm/rx.h>
+#include <bcm/knet.h>
+#include <bcm/field.h>
+#include <bcm/qos.h>
+
+void bcm_rx_trap_config_t_init(bcm_rx_trap_config_t *config)
+{
+    if (config == NULL) {
+        return;
+    }
+    memset(config, 0, sizeof(*config));
+}
+
+int bcm_rx_trap_type_create(int unit, int flags, bcm_rx_trap_t type,
+                           int *trap_id)
+{
+    if (unit != 0 || trap_id == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    (void)flags;
+    for (int t = 0; t < MOCK_BCM_TRAP_MAX; t++) {
+        if (!g_rx_trap[t].used) {
+            g_rx_trap[t].used = 1;
+            g_rx_trap[t].type = type;
+            g_rx_trap[t].flags = 0;
+            *trap_id = t;
+            return BCM_E_NONE;
+        }
+    }
+    return BCM_E_FULL;
+}
+
+int bcm_rx_trap_type_destroy(int unit, int trap_id)
+{
+    if (unit != 0) {
+        return BCM_E_UNIT;
+    }
+    if (trap_id < 0 || trap_id >= MOCK_BCM_TRAP_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_rx_trap[trap_id].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    memset(&g_rx_trap[trap_id], 0, sizeof(g_rx_trap[trap_id]));
+    return BCM_E_NONE;
+}
+
+int bcm_rx_trap_set(int unit, int trap_id, bcm_rx_trap_config_t *config)
+{
+    if (unit != 0 || config == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (trap_id < 0 || trap_id >= MOCK_BCM_TRAP_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_rx_trap[trap_id].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    g_rx_trap[trap_id].flags = config->flags;
+    return BCM_E_NONE;
+}
+
+int mock_bcm_trap_used(int trap_id)
+{
+    return (trap_id >= 0 && trap_id < MOCK_BCM_TRAP_MAX)
+               ? g_rx_trap[trap_id].used
+               : 0;
+}
+
+int mock_bcm_trap_count(void)
+{
+    int n = 0;
+    for (int t = 0; t < MOCK_BCM_TRAP_MAX; t++) {
+        if (g_rx_trap[t].used) {
+            n++;
+        }
+    }
+    return n;
+}
+
+void bcm_knet_netif_t_init(bcm_knet_netif_t *netif)
+{
+    if (netif == NULL) {
+        return;
+    }
+    memset(netif, 0, sizeof(*netif));
+}
+
+int bcm_knet_netif_create(int unit, bcm_knet_netif_t *netif)
+{
+    if (unit != 0 || netif == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    for (int t = 0; t < MOCK_BCM_KNETIF_MAX; t++) {
+        if (!g_knetif[t].used) {
+            g_knetif[t].used = 1;
+            g_knetif[t].id = t;
+            snprintf(g_knetif[t].name, sizeof(g_knetif[t].name), "%s",
+                     netif->name);
+            g_knetif[t].vlan = netif->vlan;
+            g_knetif[t].port = netif->port;
+            netif->id = t;
+            return BCM_E_NONE;
+        }
+    }
+    return BCM_E_FULL;
+}
+
+int bcm_knet_netif_destroy(int unit, int netif_id)
+{
+    if (unit != 0) {
+        return BCM_E_UNIT;
+    }
+    if (netif_id < 0 || netif_id >= MOCK_BCM_KNETIF_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_knetif[netif_id].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    memset(&g_knetif[netif_id], 0, sizeof(g_knetif[netif_id]));
+    return BCM_E_NONE;
+}
+
+int mock_bcm_knetif_count(void)
+{
+    int n = 0;
+    for (int t = 0; t < MOCK_BCM_KNETIF_MAX; t++) {
+        if (g_knetif[t].used) {
+            n++;
+        }
+    }
+    return n;
+}
+
+int bcm_field_group_create(int unit, bcm_field_qset_t qset, int pri,
+                          bcm_field_group_t *group)
+{
+    if (unit != 0 || group == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    (void)pri;
+    for (int t = 0; t < MOCK_BCM_FIELD_GROUP_MAX; t++) {
+        if (!g_fgroup[t].used) {
+            g_fgroup[t].used = 1;
+            g_fgroup[t].id = t;
+            (void)qset;
+            *group = (bcm_field_group_t)t;
+            return BCM_E_NONE;
+        }
+    }
+    return BCM_E_FULL;
+}
+
+int bcm_field_group_destroy(int unit, bcm_field_group_t group)
+{
+    if (unit != 0) {
+        return BCM_E_UNIT;
+    }
+    if (group < 0 || group >= MOCK_BCM_FIELD_GROUP_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_fgroup[group].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    for (int e = 0; e < MOCK_BCM_FIELD_ENTRY_MAX; e++) {
+        if (g_fentry[e].used && g_fentry[e].group_id == group) {
+            return BCM_E_BUSY;
+        }
+    }
+    memset(&g_fgroup[group], 0, sizeof(g_fgroup[group]));
+    return BCM_E_NONE;
+}
+
+int bcm_field_entry_create(int unit, bcm_field_group_t group,
+                          bcm_field_entry_t *entry)
+{
+    if (unit != 0 || entry == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (group < 0 || group >= MOCK_BCM_FIELD_GROUP_MAX ||
+        !g_fgroup[group].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    for (int e = 0; e < MOCK_BCM_FIELD_ENTRY_MAX; e++) {
+        if (!g_fentry[e].used) {
+            g_fentry[e].used = 1;
+            g_fentry[e].group_id = group;
+            g_fentry[e].installed = 0;
+            g_fentry[e].has_drop = 0;
+            *entry = (bcm_field_entry_t)e;
+            return BCM_E_NONE;
+        }
+    }
+    return BCM_E_FULL;
+}
+
+int bcm_field_entry_destroy(int unit, bcm_field_entry_t entry)
+{
+    if (unit != 0) {
+        return BCM_E_UNIT;
+    }
+    if (entry < 0 || entry >= MOCK_BCM_FIELD_ENTRY_MAX) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited || !g_fentry[entry].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    memset(&g_fentry[entry], 0, sizeof(g_fentry[entry]));
+    return BCM_E_NONE;
+}
+
+int bcm_field_entry_install(int unit, bcm_field_entry_t entry)
+{
+    if (unit != 0) {
+        return BCM_E_UNIT;
+    }
+    if (entry < 0 || entry >= MOCK_BCM_FIELD_ENTRY_MAX ||
+        !g_fentry[entry].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    g_fentry[entry].installed = 1;
+    return BCM_E_NONE;
+}
+
+int bcm_field_qualify_EtherType(int unit, bcm_field_entry_t entry,
+                               uint16 data, uint16 mask)
+{
+    if (entry < 0 || entry >= MOCK_BCM_FIELD_ENTRY_MAX ||
+        !g_fentry[entry].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    (void)mask;
+    g_fentry[entry].has_ether_type = 1;
+    g_fentry[entry].ether_type = data;
+    return BCM_E_NONE;
+}
+
+int bcm_field_qualify_SrcMac(int unit, bcm_field_entry_t entry,
+                            bcm_mac_t data, bcm_mac_t mask)
+{
+    if (entry < 0 || entry >= MOCK_BCM_FIELD_ENTRY_MAX ||
+        !g_fentry[entry].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    (void)data; (void)mask;
+    g_fentry[entry].has_src_mac = 1;
+    return BCM_E_NONE;
+}
+
+int bcm_field_qualify_DstMac(int unit, bcm_field_entry_t entry,
+                            bcm_mac_t data, bcm_mac_t mask)
+{
+    if (entry < 0 || entry >= MOCK_BCM_FIELD_ENTRY_MAX ||
+        !g_fentry[entry].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    (void)data; (void)mask;
+    g_fentry[entry].has_dst_mac = 1;
+    return BCM_E_NONE;
+}
+
+int bcm_field_qualify_InPort(int unit, bcm_field_entry_t entry,
+                            bcm_port_t data, bcm_port_t mask)
+{
+    if (entry < 0 || entry >= MOCK_BCM_FIELD_ENTRY_MAX ||
+        !g_fentry[entry].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    (void)mask;
+    g_fentry[entry].has_in_port = 1;
+    g_fentry[entry].in_port = data;
+    return BCM_E_NONE;
+}
+
+int bcm_field_action_add(int unit, bcm_field_entry_t entry,
+                        bcm_field_action_t action, uint32 param0,
+                        uint32 param1)
+{
+    if (entry < 0 || entry >= MOCK_BCM_FIELD_ENTRY_MAX ||
+        !g_fentry[entry].used) {
+        return BCM_E_NOT_FOUND;
+    }
+    (void)param0; (void)param1;
+    if (action == bcmFieldActionDrop) {
+        g_fentry[entry].has_drop = 1;
+        return BCM_E_NONE;
+    }
+    return BCM_E_UNAVAIL;
+}
+
+int mock_bcm_field_group_count(void)
+{
+    int n = 0;
+    for (int t = 0; t < MOCK_BCM_FIELD_GROUP_MAX; t++) {
+        if (g_fgroup[t].used) {
+            n++;
+        }
+    }
+    return n;
+}
+
+int mock_bcm_field_group_has_entry(int group_id)
+{
+    for (int e = 0; e < MOCK_BCM_FIELD_ENTRY_MAX; e++) {
+        if (g_fentry[e].used && g_fentry[e].group_id == group_id) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int mock_bcm_field_entry_installed(int entry_id)
+{
+    if (entry_id >= 0 && entry_id < MOCK_BCM_FIELD_ENTRY_MAX) {
+        return g_fentry[entry_id].installed;
+    }
+    return 0;
+}
+
+int mock_bcm_field_entry_drops(int entry_id)
+{
+    if (entry_id >= 0 && entry_id < MOCK_BCM_FIELD_ENTRY_MAX) {
+        return g_fentry[entry_id].has_drop;
+    }
+    return 0;
+}
+
+void bcm_qos_map_t_init(bcm_qos_map_t *map)
+{
+    if (map == NULL) {
+        return;
+    }
+    memset(map, 0, sizeof(*map));
+}
+
+int bcm_qos_map_add(int unit, uint32 flags, bcm_qos_map_t *map, int map_id)
+{
+    if (unit != 0 || map == NULL) {
+        return BCM_E_PARAM;
+    }
+    if (!g_mock.inited) {
+        return BCM_E_INIT;
+    }
+    (void)flags; (void)map_id;
+    for (int t = 0; t < MOCK_BCM_QOS_MAP_MAX; t++) {
+        if (!g_qos_map[t].used) {
+            g_qos_map[t].used = 1;
+            g_qos_map[t].dscp = map->dscp;
+            g_qos_map[t].int_pri = map->int_pri;
+            return BCM_E_NONE;
+        }
+    }
+    return BCM_E_FULL;
+}
+
+int bcm_qos_map_delete(int unit, uint32 flags, bcm_qos_map_t *map,
+                      int map_id)
+{
+    if (unit != 0 || map == NULL) {
+        return BCM_E_PARAM;
+    }
+    (void)flags; (void)map_id;
+    for (int t = 0; t < MOCK_BCM_QOS_MAP_MAX; t++) {
+        if (g_qos_map[t].used && g_qos_map[t].dscp == map->dscp &&
+            g_qos_map[t].int_pri == map->int_pri) {
+            memset(&g_qos_map[t], 0, sizeof(g_qos_map[t]));
+            return BCM_E_NONE;
+        }
+    }
+    return BCM_E_NOT_FOUND;
+}
+
+int mock_bcm_qos_map_count(void)
+{
+    int n = 0;
+    for (int t = 0; t < MOCK_BCM_QOS_MAP_MAX; t++) {
+        if (g_qos_map[t].used) {
             n++;
         }
     }

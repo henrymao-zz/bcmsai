@@ -35,6 +35,7 @@ jobs:
           ./build/test_port
           ./build/test_l2
           ./build/test_l3
+          ./build/test_p4
 
       - name: Smoke test
         run: ./build/smoke_load ./build/libsai.so

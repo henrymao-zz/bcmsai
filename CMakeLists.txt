@@ -98,6 +98,9 @@ add_library(sai_bcm_obj OBJECT
     src/sai_bcm_nexthopgroup.c
     src/sai_bcm_route.c
     src/sai_bcm_neighbor.c
+    src/sai_bcm_hostif.c
+    src/sai_bcm_acl.c
+    src/sai_bcm_qosmap.c
     src/sai_bcm_stubs.c
     src/sai_bcm_log.c
 )
@@ -207,6 +210,7 @@ if(SAI_BCM_BACKEND_IS_MOCK)
     sai_bcm_unit_test(test_port)
     sai_bcm_unit_test(test_l2)
     sai_bcm_unit_test(test_l3)
+    sai_bcm_unit_test(test_p4)
 endif()
 
 add_executable(smoke_load tests/smoke_load.c)
