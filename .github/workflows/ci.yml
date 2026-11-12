@@ -33,6 +33,7 @@ jobs:
           ./build/test_oid
           ./build/test_switch
           ./build/test_port
+          ./build/test_l2
 
       - name: Smoke test
         run: ./build/smoke_load ./build/libsai.so

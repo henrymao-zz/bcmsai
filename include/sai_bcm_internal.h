@@ -30,6 +30,15 @@
 #include "sai_bcm_api_tables.x"
 #undef SAI_BCM_API
 
+/* ---------------------------------------------------------------------------
+ * Generic per-type index allocator (src/sai_bcm_oid.c)
+ * --------------------------------------------------------------------------- */
+sai_status_t sai_bcm_idx_alloc(sai_object_type_t type, uint32_t *idx);
+void sai_bcm_idx_free(sai_object_type_t type, uint32_t idx);
+bool sai_bcm_idx_valid(sai_object_type_t type, uint32_t idx);
+uint16_t sai_bcm_idx_count(sai_object_type_t type);
+void sai_bcm_idx_reset_all(void);
+
 /* Build-time target metadata (set by CMake). */
 #ifndef SAI_BCM_TARGET_NAME
 #define SAI_BCM_TARGET_NAME "BCM56371"
@@ -97,5 +106,9 @@ extern struct sai_bcm_switch_state g_sai_bcm_sw;
  * Returns the port entry, or NULL when the oid is not a live port. */
 const struct sai_bcm_port_entry *
 sai_bcm_switch_port_lookup(sai_object_id_t port_id);
+
+/* Reverse map: BCM logical port number -> SAI port oid
+ * (SAI port index and BCM port numbers need not be equal). */
+sai_object_id_t sai_bcm_switch_oid_from_bcm_port(bcm_port_t bcm_port);
 
 #endif /* SAI_BCM_INTERNAL_H */

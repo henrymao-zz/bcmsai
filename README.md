@@ -21,8 +21,12 @@ See [PLAN.md](./PLAN.md) for the full design and roadmap.
 | BCM error -> SAI status mapping | done |
 | **P1 Switch API** (`bcm_init`/`bcm_detach`, port enumeration via `bcm_port_config_get`, port number/list, profile, src mac, notifications) | done |
 | **P1 Port API** (admin/speed/MTU/autoneg/FEC get+set, oper status, stats get/clear via `bcm_stat_*`) | done |
-| Mock BCM backend (32 XE ports + CPU) + unit tests | done |
-| L2 (VLAN/bridge/FDB/LAG), L3 (VRF/RIF/route/neighbor) | P2/P3, not started |
+| Mock BCM backend (32 XE ports + CPU, VLAN/trunk/L2/vswitch sim) + unit tests | done |
+| **P2 Bridge API** (default 1Q bridge + per-port bridge ports at init, 1D via `bcm_vswitch_*`) | done |
+| **P2 VLAN API** (create/remove, members via bridge ports + `bcm_vlan_gport_*`, tagging, member list) | done |
+| **P2 LAG API** (`bcm_trunk_create/destroy/member_add/delete`, PORT_LIST) | done |
+| **P2 FDB API** (`bcm_l2_addr_*` add/remove/set/get, flush by vlan/port/trunk) | done |
+| L3 (VRF/RIF/route/neighbor) | P3, not started |
 | Real OpenBCM archive link (`SAI_BCM_BACKEND=openbcm`) | wired, needs SDK build |
 
 Only the 8 SAI ABI symbols (`sai_api_initialize`, `sai_api_query`,
@@ -109,12 +113,18 @@ include/sai_bcm_internal.h  shared state, lock, cross-module accessors
 src/sai_bcm_api.c         SAI entry points + api_query dispatch + queries
 src/sai_bcm_switch.c      Switch API: create/remove/attrs (bcm_init/config_get)
 src/sai_bcm_port.c         Port API: attrs + stats (bcm_port_*/bcm_stat_*)
+src/sai_bcm_bridge.c       Bridge API: default 1Q bridge, 1D via bcm_vswitch_*
+src/sai_bcm_vlan.c         VLAN API: bcm_vlan_*, members via bridge ports
+src/sai_bcm_lag.c          LAG API: bcm_trunk_*
+src/sai_bcm_fdb.c          FDB API: bcm_l2_addr_*, flush by vlan/port/trunk
+src/sai_bcm_oid.c          per-type object index allocator
 src/sai_bcm_stubs.c        zero-init vtables for not-yet-implemented modules
 src/sai_bcm_log.c          logging + bcm_err -> sai_status mapping
 tests/mock/mock_bcm.c     mock BCM backend (dev/CI only)
 tests/test_oid.c          OID encoding unit tests
 tests/test_switch.c       Switch API tests over the mock backend
 tests/test_port.c         Port API tests over the mock backend
+tests/test_l2.c           VLAN/Bridge/LAG/FDB tests over the mock backend
 tests/smoke_load.c        dlopen + 44-table enumeration ABI test
 cmake/                    version script + per-target Make.local drivers
 scripts/obcm_build.sh     OpenBCM SDK build driver (P1+)

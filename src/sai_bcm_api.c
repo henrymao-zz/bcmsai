@@ -4,7 +4,12 @@
  * sai_api_initialize/uninitialize/log_set lifecycle, sai_api_query dispatch
  * over the per-module vtables, and the OID-based object queries.
  */
+/* PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP (GNU) — the adapter lock must be
+ * recursive: module init helpers re-enter the lock from create_switch. */
+#define _GNU_SOURCE
+
 #include "sai_bcm_internal.h"
+#include "sai_bcm_l2.h"
 
 #include <string.h>
 
@@ -20,7 +25,9 @@ static struct {
     .initialized = false,
     .services     = NULL,
     .log_level    = SAI_LOG_LEVEL_WARN,
-    .lock         = PTHREAD_MUTEX_INITIALIZER,
+    /* Recursive: module implementations (e.g. sai_bcm_bridge_init called
+     * from create_switch) take the same lock while it is held. */
+    .lock         = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP,
 };
 
 /* ---------------------------------------------------------------------------
@@ -84,9 +91,12 @@ sai_status_t sai_api_uninitialize(void)
         SAI_BCM_LOG(SAI_LOG_LEVEL_WARN,
                     "uninitialize with live switch; detaching");
         (void)bcm_detach(g_sai_bcm_sw.unit);
+        sai_bcm_bridge_deinit();
         memset(&g_sai_bcm_sw, 0, sizeof(g_sai_bcm_sw));
         g_sai_bcm_sw.unit = SAI_BCM_UNIT_DEFAULT;
     }
+
+    sai_bcm_idx_reset_all();
 
     g_state.initialized = false;
     g_state.services     = NULL;

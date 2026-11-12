@@ -45,4 +45,27 @@ int mock_bcm_stat_sync_count(void);
 /* Whether bcm_stat_clear was called for the given port. */
 int mock_bcm_stat_clear_count(int port);
 
+/* ---- VLAN ---- */
+#define MOCK_BCM_VLAN_MAX 4095 /* vids 1..4095 */
+
+int mock_bcm_vlan_used(int vid);
+int mock_bcm_vlan_member_count(int vid);
+/* 0 = not member, 1 = untagged, 2 = tagged */
+int mock_bcm_vlan_member_mode(int vid, int gport);
+
+/* ---- trunk ---- */
+int mock_bcm_trunk_used(int tid);
+int mock_bcm_trunk_member_count(int tid);
+int mock_bcm_trunk_has_member(int tid, int gport);
+
+/* ---- l2 ---- */
+int mock_bcm_l2_count(void);
+int mock_bcm_l2_is_static(int port, const uint8_t mac[6], int vid);
+int mock_bcm_l2_dest_is_trunk(int port, const uint8_t mac[6], int vid,
+                              int *tgid);
+
+/* ---- vswitch ---- */
+int mock_bcm_vswitch_used(int vsi);
+int mock_bcm_vswitch_member_count(int vsi);
+
 #endif /* MOCK_BCM_H */

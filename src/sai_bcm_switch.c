@@ -6,6 +6,7 @@
  * (port number/list, profile, src mac, notifications).
  */
 #include "sai_bcm_internal.h"
+#include "sai_bcm_l2.h"
 
 #include <string.h>
 
@@ -16,12 +17,21 @@ struct sai_bcm_switch_state g_sai_bcm_sw = {
 /* ---------------------------------------------------------------------------
  * Port lookup (used by the port module)
  * --------------------------------------------------------------------------- */
+sai_object_id_t sai_bcm_switch_oid_from_bcm_port(bcm_port_t bcm_port)
+{
+    for (uint32_t i = 0; i < g_sai_bcm_sw.port_count; i++) {
+        if (g_sai_bcm_sw.ports[i].bcm_port == bcm_port) {
+            return g_sai_bcm_sw.ports[i].port_oid;
+        }
+    }
+    return SAI_NULL_OBJECT_ID;
+}
+
 const struct sai_bcm_port_entry *
 sai_bcm_switch_port_lookup(sai_object_id_t port_id)
 {
-    if (!g_sai_bcm_sw.created) {
-        return NULL;
-    }
+    /* No created check here: create_switch populates the port map before
+     * bridge init walks it, while g_sai_bcm_sw.created is still false. */
     if (sai_bcm_oid_type(port_id) != SAI_OBJECT_TYPE_PORT) {
         return NULL;
     }
@@ -152,6 +162,15 @@ static sai_status_t create_switch(sai_object_id_t *switch_id,
         return st;
     }
 
+    /* Default 1Q bridge + one bridge port per front-panel port. */
+    st = sai_bcm_bridge_init();
+    if (st != SAI_STATUS_SUCCESS) {
+        SAI_BCM_LOG(SAI_LOG_LEVEL_ERROR, "bridge init failed: 0x%x", st);
+        (void)bcm_detach(g_sai_bcm_sw.unit);
+        sai_bcm_unlock();
+        return st;
+    }
+
     g_sai_bcm_sw.switch_oid = sai_bcm_oid_encode(
         SAI_BCM_SWITCH_INSTANCE_FIRST, SAI_OBJECT_TYPE_SWITCH, 0);
     g_sai_bcm_sw.created = true;
@@ -183,6 +202,7 @@ static sai_status_t remove_switch(sai_object_id_t switch_id)
         return sai_bcm_status(rv);
     }
 
+    sai_bcm_bridge_deinit();
     memset(&g_sai_bcm_sw, 0, sizeof(g_sai_bcm_sw));
     g_sai_bcm_sw.unit = SAI_BCM_UNIT_DEFAULT;
 
@@ -277,6 +297,13 @@ static sai_status_t get_switch_attribute(sai_object_id_t switch_id,
             break;
         case SAI_SWITCH_ATTR_SWITCH_PROFILE_ID:
             attr->value.u32 = g_sai_bcm_sw.profile_id;
+            break;
+        case SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID:
+            if (!g_sai_bcm_default_1q_bridge_oid) {
+                st = SAI_STATUS_ITEM_NOT_FOUND;
+            } else {
+                attr->value.oid = g_sai_bcm_default_1q_bridge_oid;
+            }
             break;
         case SAI_SWITCH_ATTR_SRC_MAC_ADDRESS:
             memcpy(attr->value.mac, g_sai_bcm_sw.src_mac,
