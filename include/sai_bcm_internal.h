@@ -39,6 +39,30 @@ bool sai_bcm_idx_valid(sai_object_type_t type, uint32_t idx);
 uint16_t sai_bcm_idx_count(sai_object_type_t type);
 void sai_bcm_idx_reset_all(void);
 
+/* ---------------------------------------------------------------------------
+ * Shared bulk operation engine (src/sai_bcm_bulk.c)
+ * --------------------------------------------------------------------------- */
+typedef sai_status_t (*sai_bcm_bulk_create_one_fn)(
+        sai_object_id_t *oid, sai_object_id_t switch_id, uint32_t attr_count,
+        const sai_attribute_t *attr_list);
+
+typedef sai_status_t (*sai_bcm_bulk_remove_one_fn)(sai_object_id_t oid);
+
+void sai_bcm_bulk_mark_not_executed(sai_status_t *statuses, uint32_t from,
+                                    uint32_t count);
+
+sai_status_t sai_bcm_bulk_object_create(
+        sai_object_id_t switch_id, uint32_t obj_count,
+        const uint32_t *attr_count, const sai_attribute_t **attr_list,
+        sai_bulk_op_error_mode_t mode, sai_object_id_t *object_id,
+        sai_status_t *object_statuses,
+        sai_bcm_bulk_create_one_fn create_one);
+
+sai_status_t sai_bcm_bulk_object_remove(
+        uint32_t obj_count, const sai_object_id_t *object_id,
+        sai_bulk_op_error_mode_t mode, sai_status_t *object_statuses,
+        sai_bcm_bulk_remove_one_fn remove_one);
+
 /* Build-time target metadata (set by CMake). */
 #ifndef SAI_BCM_TARGET_NAME
 #define SAI_BCM_TARGET_NAME "BCM56371"

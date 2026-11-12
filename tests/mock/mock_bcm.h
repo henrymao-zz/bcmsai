@@ -75,6 +75,8 @@ int mock_bcm_l3_egress_count(void);
 /* 0 = gone, 1 = exists */
 int mock_bcm_l3_egress_exists(int intf_id);
 int mock_bcm_l3_egress_vlan(int intf_id);
+/* 1 on success (mac_out filled), 0 when the object does not exist */
+int mock_bcm_l3_egress_mac(int if_id, uint8_t mac_out[6]);
 int mock_bcm_l3_egress_is_trunk(int intf_id);
 int mock_bcm_l3_ecmp_exists(int intf_id);
 int mock_bcm_l3_ecmp_member_count(int intf_id);

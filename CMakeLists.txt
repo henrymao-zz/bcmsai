@@ -86,6 +86,7 @@ endif()
 add_library(sai_bcm_obj OBJECT
     src/sai_bcm_api.c
     src/sai_bcm_oid.c
+    src/sai_bcm_bulk.c
     src/sai_bcm_switch.c
     src/sai_bcm_port.c
     src/sai_bcm_bridge.c
@@ -211,6 +212,7 @@ if(SAI_BCM_BACKEND_IS_MOCK)
     sai_bcm_unit_test(test_l2)
     sai_bcm_unit_test(test_l3)
     sai_bcm_unit_test(test_p4)
+    sai_bcm_unit_test(test_bulk)
 endif()
 
 add_executable(smoke_load tests/smoke_load.c)

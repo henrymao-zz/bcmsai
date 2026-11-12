@@ -85,6 +85,13 @@ struct sai_bcm_nh {
 
 struct sai_bcm_nh *sai_bcm_nh_get(sai_object_id_t nh_oid);
 
+/* Re-program the egress objects of next hops matching (rif, ip) with a new
+ * forwarding MAC, in place (BCM_L3_REPLACE keeps the egress ids stable so
+ * routes do not need repointing). Called from the neighbor module when a
+ * neighbor is created or its MAC changes. */
+void sai_bcm_nh_refresh_mac(sai_object_id_t rif_oid,
+                            const sai_ip_address_t *ip, const sai_mac_t mac);
+
 /* ---------------------------------------------------------------------------
  * Next hop group (ECMP)
  * --------------------------------------------------------------------------- */

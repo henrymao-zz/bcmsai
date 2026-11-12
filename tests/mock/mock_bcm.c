@@ -49,7 +49,7 @@ static struct mock_l2_entry g_l2[MOCK_BCM_L2_ENTRIES];
 #define MOCK_BCM_L3_HOST_MAX    1024
 
 struct mock_l3_ingress { uint8_t used; bcm_vrf_t vrf; };
-struct mock_l3_egress  { uint8_t used; bcm_vlan_t vlan; int port; int trunk; };
+struct mock_l3_egress  { uint8_t used; bcm_vlan_t vlan; int port; int trunk; uint8_t mac[6]; };
 struct mock_l3_ecmp    { uint8_t used; int member[MOCK_BCM_L3_EGRESS_MAX]; int member_count; };
 struct mock_l3_route   { uint8_t used; uint8_t is_v6; bcm_vrf_t vrf; uint32_t subnet; uint32_t mask; uint8_t ip6_net[16]; uint8_t ip6_mask[16]; bcm_if_t intf; };
 struct mock_l3_host    { uint8_t used; uint8_t is_v6; bcm_vrf_t vrf; uint32_t ip; uint8_t ip6[16]; bcm_if_t intf; };
@@ -1173,12 +1173,19 @@ int bcm_l3_egress_create(int unit, uint32 flags, bcm_l3_egress_t *egr,
     if (!g_mock.inited) {
         return BCM_E_INIT;
     }
-    (void)flags;
-    size_t elem = sizeof(g_l3_egress[0]);
-    uint8_t off = offsetof(struct mock_l3_egress, used);
-    int id = mock_id_alloc(g_l3_egress, elem, MOCK_BCM_L3_EGRESS_MAX, &off);
-    if (id < 0) {
-        return BCM_E_FULL;
+    int id = (int)*if_id;
+    if (flags & BCM_L3_REPLACE) {
+        /* In-place re-program: the caller passes the existing object id. */
+        if (id < 0 || id >= MOCK_BCM_L3_EGRESS_MAX || !g_l3_egress[id].used) {
+            return BCM_E_NOT_FOUND;
+        }
+    } else {
+        size_t elem = sizeof(g_l3_egress[0]);
+        uint8_t off = offsetof(struct mock_l3_egress, used);
+        id = mock_id_alloc(g_l3_egress, elem, MOCK_BCM_L3_EGRESS_MAX, &off);
+        if (id < 0) {
+            return BCM_E_FULL;
+        }
     }
     g_l3_egress[id].vlan = egr->vlan;
     if (egr->flags & BCM_L3_TGID) {
@@ -1188,6 +1195,7 @@ int bcm_l3_egress_create(int unit, uint32 flags, bcm_l3_egress_t *egr,
         g_l3_egress[id].port = egr->port;
         g_l3_egress[id].trunk = -1;
     }
+    memcpy(g_l3_egress[id].mac, egr->mac_addr, 6);
     *if_id = (bcm_if_t)id;
     return BCM_E_NONE;
 }
@@ -1232,6 +1240,16 @@ int mock_bcm_l3_egress_vlan(int if_id)
         return (int)g_l3_egress[if_id].vlan;
     }
     return -1;
+}
+
+int mock_bcm_l3_egress_mac(int if_id, uint8_t mac_out[6])
+{
+    if (if_id >= 0 && if_id < MOCK_BCM_L3_EGRESS_MAX &&
+        g_l3_egress[if_id].used && mac_out != NULL) {
+        memcpy(mac_out, g_l3_egress[if_id].mac, 6);
+        return 1;
+    }
+    return 0;
 }
 
 int mock_bcm_l3_egress_is_trunk(int if_id)

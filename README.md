@@ -33,7 +33,9 @@ See [PLAN.md](./PLAN.md) for the full design and roadmap.
 | **P4 Hostif** (trap groups + CPU queue, traps via `bcm_rx_trap_*` w/ curated type map, KNET netdevs via `bcm_knet_netif_*`) | done |
 | **P4 ACL basic** (ingress tables via `bcm_field_group_create`, entries: src/dst-mac, ethertype, in-port + drop/forward) | done |
 | **P4 QoS minimal** (DSCP->TC maps via `bcm_qos_map_add/delete`) | done |
-| ACL counters/ranges/groups, user-defined traps, packet I/O, schedulers/WRED/buffers | P5, not started |
+| **P5 Bulk ops** (vlan/lag/nhg member create+remove, FDB + route entry bulk create/remove/set/get, both error modes with SAI_STATUS_NOT_EXECUTED semantics) | done |
+| **P5 Limitation fixes** (NH egress MAC refreshed in place via BCM_L3_REPLACE on neighbor create/set; bridge-port ADMIN_STATE drives bcm_port_enable_set; get_availability for 17 implemented types) | done |
+| ACL counters/ranges/groups, user-defined traps, packet I/O, schedulers/WRED/buffers, STP/mirror, PTF on hardware | next, not started |
 | Real OpenBCM archive link (`SAI_BCM_BACKEND=openbcm`) | wired, needs SDK build |
 
 Only the 8 SAI ABI symbols (`sai_api_initialize`, `sai_api_query`,
@@ -133,6 +135,7 @@ src/sai_bcm_neighbor.c     Neighbor API: bcm_l3_host_add/delete
 src/sai_bcm_hostif.c       Hostif API: bcm_rx_trap_*, bcm_knet_netif_*
 src/sai_bcm_acl.c          ACL API (basic): bcm_field_*
 src/sai_bcm_qosmap.c       QoS map API (minimal): bcm_qos_map_*
+src/sai_bcm_bulk.c         shared bulk operation engine (error modes, statuses)
 src/sai_bcm_oid.c          per-type object index allocator
 src/sai_bcm_stubs.c        zero-init vtables for not-yet-implemented modules
 src/sai_bcm_log.c          logging + bcm_err -> sai_status mapping
@@ -143,6 +146,7 @@ tests/test_port.c         Port API tests over the mock backend
 tests/test_l2.c           VLAN/Bridge/LAG/FDB tests over the mock backend
 tests/test_l3.c           VR/RIF/NH/NHG/Route/Neighbor tests over the mock backend
 tests/test_p4.c           Hostif/ACL/QoS-map tests over the mock backend
+tests/test_bulk.c         bulk ops + NH MAC refresh + bridge admin tests
 tests/smoke_load.c        dlopen + 44-table enumeration ABI test
 cmake/                    version script + per-target Make.local drivers
 scripts/obcm_build.sh     OpenBCM SDK build driver (P1+)

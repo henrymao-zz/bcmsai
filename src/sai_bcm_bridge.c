@@ -442,6 +442,23 @@ static sai_status_t set_bridge_port_attribute(sai_object_id_t bridge_port_id,
     switch (attr->id) {
     case SAI_BRIDGE_PORT_ATTR_ADMIN_STATE:
         bp->admin_state = attr->value.booldata;
+        /* For physical-port bridge ports the admin state drives the port
+         * forwarding state (classic Broadcom SAI mapping). */
+        if (sai_bcm_oid_type(bp->port_oid) == SAI_OBJECT_TYPE_PORT) {
+            const struct sai_bcm_port_entry *pe =
+                sai_bcm_switch_port_lookup(bp->port_oid);
+            if (pe != NULL) {
+                int rv = bcm_port_enable_set(
+                    g_sai_bcm_sw.unit, pe->bcm_port,
+                    attr->value.booldata ? 1 : 0);
+                if (rv < 0) {
+                    SAI_BCM_LOG(SAI_LOG_LEVEL_ERROR,
+                                "bcm_port_enable_set failed: %d (%s)", rv,
+                                bcm_errmsg(rv));
+                    st = sai_bcm_status(rv);
+                }
+            }
+        }
         break;
     default:
         st = SAI_STATUS_NOT_SUPPORTED;

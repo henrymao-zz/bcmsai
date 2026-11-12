@@ -199,6 +199,7 @@ sai_status_t sai_object_type_get_availability(sai_object_id_t switch_id,
         return SAI_STATUS_ITEM_NOT_FOUND;
     }
 
+    /* Registry-backed types: free indices = capacity - allocated. */
     switch (object_type) {
     case SAI_OBJECT_TYPE_PORT:
         if (attr_count != 0) {
@@ -206,6 +207,44 @@ sai_status_t sai_object_type_get_availability(sai_object_id_t switch_id,
         }
         *count = g_sai_bcm_sw.port_count;
         return SAI_STATUS_SUCCESS;
+    case SAI_OBJECT_TYPE_VLAN: {
+        if (attr_count != 0) {
+            return SAI_STATUS_NOT_SUPPORTED;
+        }
+        uint32_t used = 0;
+        for (uint32_t vid = SAI_BCM_VLAN_MIN; vid <= SAI_BCM_VLAN_MAX;
+             vid++) {
+            if (g_sai_bcm_vlan_used[vid]) {
+                used++;
+            }
+        }
+        *count = (uint64_t)(SAI_BCM_VLAN_MAX - SAI_BCM_VLAN_MIN + 1) - used;
+        return SAI_STATUS_SUCCESS;
+    }
+#define SAI_BCM_AVAIL(TYPE, CAP)                                            \
+    case SAI_OBJECT_TYPE_##TYPE:                                            \
+        if (attr_count != 0) {                                              \
+            return SAI_STATUS_NOT_SUPPORTED;                               \
+        }                                                                   \
+        *count = (uint64_t)(CAP) - sai_bcm_idx_count(object_type);          \
+        return SAI_STATUS_SUCCESS;
+    SAI_BCM_AVAIL(VLAN_MEMBER, 4096)
+    SAI_BCM_AVAIL(LAG, 128)
+    SAI_BCM_AVAIL(LAG_MEMBER, 512)
+    SAI_BCM_AVAIL(VIRTUAL_ROUTER, 64)
+    SAI_BCM_AVAIL(ROUTER_INTERFACE, 256)
+    SAI_BCM_AVAIL(NEXT_HOP, 1024)
+    SAI_BCM_AVAIL(NEXT_HOP_GROUP, 256)
+    SAI_BCM_AVAIL(NEXT_HOP_GROUP_MEMBER, 1024)
+    SAI_BCM_AVAIL(BRIDGE, 64)
+    SAI_BCM_AVAIL(BRIDGE_PORT, 384)
+    SAI_BCM_AVAIL(HOSTIF_TRAP_GROUP, 64)
+    SAI_BCM_AVAIL(HOSTIF_TRAP, 256)
+    SAI_BCM_AVAIL(HOSTIF, 64)
+    SAI_BCM_AVAIL(ACL_TABLE, 64)
+    SAI_BCM_AVAIL(ACL_ENTRY, 512)
+    SAI_BCM_AVAIL(QOS_MAP, 64)
+#undef SAI_BCM_AVAIL
     default:
         *count = 0;
         return SAI_STATUS_NOT_SUPPORTED;

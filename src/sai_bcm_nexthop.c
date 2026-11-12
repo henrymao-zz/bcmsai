@@ -20,6 +20,68 @@
 
 static struct sai_bcm_nh g_nhs[SAI_BCM_MAX_NEXT_HOPS];
 
+void sai_bcm_nh_refresh_mac(sai_object_id_t rif_oid,
+                            const sai_ip_address_t *ip,
+                            const sai_mac_t mac)
+{
+    sai_bcm_lock();
+
+    for (uint32_t i = 0; i < SAI_BCM_MAX_NEXT_HOPS; i++) {
+        struct sai_bcm_nh *nh = &g_nhs[i];
+        if (!nh->used || nh->rif_oid != rif_oid) {
+            continue;
+        }
+        if (nh->ip.addr_family != ip->addr_family) {
+            continue;
+        }
+        if (ip->addr_family == SAI_IP_ADDR_FAMILY_IPV4) {
+            if (nh->ip.addr.ip4 != ip->addr.ip4) {
+                continue;
+            }
+        } else if (memcmp(nh->ip.addr.ip6, ip->addr.ip6,
+                          sizeof(sai_ip6_t)) != 0) {
+            continue;
+        }
+
+        /* Re-program the egress object in place with the resolved MAC. */
+        struct sai_bcm_rif *rif = sai_bcm_rif_get(nh->rif_oid);
+        if (rif == NULL) {
+            continue;
+        }
+
+        bcm_vlan_t vid = 0;
+        bcm_gport_t gport = 0;
+        bool is_trunk = false;
+        if (sai_bcm_rif_egress_params(rif, &vid, &gport, &is_trunk) < 0) {
+            continue;
+        }
+
+        bcm_l3_egress_t egr;
+        bcm_l3_egress_t_init(&egr);
+        egr.intf = (rif->type == SAI_ROUTER_INTERFACE_TYPE_VLAN)
+                       ? (bcm_if_t)vid : 0;
+        egr.vlan = vid;
+        if (is_trunk) {
+            egr.flags |= BCM_L3_TGID;
+            egr.trunk = BCM_GPORT_TRUNK_GET(gport);
+        } else if (rif->type == SAI_ROUTER_INTERFACE_TYPE_PORT) {
+            egr.port = BCM_GPORT_LOCAL_GET(gport);
+        }
+        memcpy(egr.mac_addr, mac, sizeof(egr.mac_addr));
+
+        bcm_if_t if_id = nh->egress_if;
+        int rv = bcm_l3_egress_create(g_sai_bcm_sw.unit, BCM_L3_REPLACE,
+                                      &egr, &if_id);
+        if (rv < 0) {
+            SAI_BCM_LOG(SAI_LOG_LEVEL_ERROR,
+                        "bcm_l3_egress_create(REPLACE) failed: %d (%s)", rv,
+                        bcm_errmsg(rv));
+        }
+    }
+
+    sai_bcm_unlock();
+}
+
 struct sai_bcm_nh *sai_bcm_nh_get(sai_object_id_t nh_oid)
 {
     if (sai_bcm_oid_type(nh_oid) != SAI_OBJECT_TYPE_NEXT_HOP) {

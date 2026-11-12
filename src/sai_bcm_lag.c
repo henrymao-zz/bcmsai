@@ -413,9 +413,9 @@ static sai_status_t bulk_create(sai_object_id_t switch_id, uint32_t obj_count,
                                 sai_object_id_t *object_id,
                                 sai_status_t *object_statuses)
 {
-    (void)switch_id; (void)obj_count; (void)attr_count; (void)attr_list;
-    (void)mode; (void)object_id; (void)object_statuses;
-    return SAI_STATUS_NOT_SUPPORTED;
+    return sai_bcm_bulk_object_create(switch_id, obj_count, attr_count,
+                                      attr_list, mode, object_id,
+                                      object_statuses, create_lag_member);
 }
 
 static sai_status_t bulk_remove(uint32_t obj_count,
@@ -423,8 +423,8 @@ static sai_status_t bulk_remove(uint32_t obj_count,
                                sai_bulk_op_error_mode_t mode,
                                sai_status_t *object_statuses)
 {
-    (void)obj_count; (void)object_id; (void)mode; (void)object_statuses;
-    return SAI_STATUS_NOT_SUPPORTED;
+    return sai_bcm_bulk_object_remove(obj_count, object_id, mode,
+                                     object_statuses, remove_lag_member);
 }
 
 /* ---------------------------------------------------------------------------

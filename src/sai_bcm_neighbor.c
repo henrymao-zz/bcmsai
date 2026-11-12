@@ -130,6 +130,10 @@ static sai_status_t create_neighbor_entry(const sai_neighbor_entry_t *neighbor_e
     slot->ip = neighbor_entry->ip_address;
     memcpy(slot->mac, mac, sizeof(slot->mac));
 
+    /* Refresh next-hop egress objects resolving through this neighbor. */
+    sai_bcm_nh_refresh_mac(neighbor_entry->rif_id, &neighbor_entry->ip_address,
+                           mac);
+
     sai_bcm_unlock();
     return SAI_STATUS_SUCCESS;
 }
@@ -213,6 +217,9 @@ static sai_status_t set_neighbor_entry_attribute(
         int rv = bcm_l3_host_add(g_sai_bcm_sw.unit, &host);
         if (rv >= 0) {
             memcpy(nb->mac, attr->value.mac, sizeof(nb->mac));
+            sai_bcm_nh_refresh_mac(neighbor_entry->rif_id,
+                                   &neighbor_entry->ip_address,
+                                   nb->mac);
             st = SAI_STATUS_SUCCESS;
         } else {
             SAI_BCM_LOG(SAI_LOG_LEVEL_ERROR,

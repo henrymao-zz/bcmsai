@@ -262,17 +262,40 @@ static sai_status_t bulk_create(uint32_t n, const sai_route_entry_t *entries,
                                sai_bulk_op_error_mode_t mode,
                                sai_status_t *statuses)
 {
-    (void)entries; (void)n; (void)attr_count; (void)attr_list;
-    (void)mode; (void)statuses;
-    return SAI_STATUS_NOT_SUPPORTED;
+    if (n > 0 && (entries == NULL || attr_count == NULL || attr_list == NULL ||
+                  statuses == NULL)) {
+        return SAI_STATUS_INVALID_PARAMETER;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        sai_status_t st = create_route_entry(&entries[i], attr_count[i],
+                                             attr_list[i]);
+        statuses[i] = st;
+        if (st != SAI_STATUS_SUCCESS &&
+            mode == SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR) {
+            sai_bcm_bulk_mark_not_executed(statuses, i + 1, n - i - 1);
+            break;
+        }
+    }
+    return SAI_STATUS_SUCCESS;
 }
 
 static sai_status_t bulk_remove(uint32_t n, const sai_route_entry_t *entries,
                                sai_bulk_op_error_mode_t mode,
                                sai_status_t *statuses)
 {
-    (void)entries; (void)n; (void)mode; (void)statuses;
-    return SAI_STATUS_NOT_SUPPORTED;
+    if (n > 0 && (entries == NULL || statuses == NULL)) {
+        return SAI_STATUS_INVALID_PARAMETER;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        sai_status_t st = remove_route_entry(&entries[i]);
+        statuses[i] = st;
+        if (st != SAI_STATUS_SUCCESS &&
+            mode == SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR) {
+            sai_bcm_bulk_mark_not_executed(statuses, i + 1, n - i - 1);
+            break;
+        }
+    }
+    return SAI_STATUS_SUCCESS;
 }
 
 static sai_status_t bulk_set(uint32_t n, const sai_route_entry_t *entries,
@@ -280,8 +303,20 @@ static sai_status_t bulk_set(uint32_t n, const sai_route_entry_t *entries,
                             sai_bulk_op_error_mode_t mode,
                             sai_status_t *statuses)
 {
-    (void)entries; (void)n; (void)attr_list; (void)mode; (void)statuses;
-    return SAI_STATUS_NOT_SUPPORTED;
+    if (n > 0 && (entries == NULL || attr_list == NULL || statuses == NULL)) {
+        return SAI_STATUS_INVALID_PARAMETER;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        sai_status_t st = set_route_entry_attribute(&entries[i],
+                                                    &attr_list[i]);
+        statuses[i] = st;
+        if (st != SAI_STATUS_SUCCESS &&
+            mode == SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR) {
+            sai_bcm_bulk_mark_not_executed(statuses, i + 1, n - i - 1);
+            break;
+        }
+    }
+    return SAI_STATUS_SUCCESS;
 }
 
 static sai_status_t bulk_get(uint32_t n, const sai_route_entry_t *entries,
@@ -290,9 +325,22 @@ static sai_status_t bulk_get(uint32_t n, const sai_route_entry_t *entries,
                             sai_bulk_op_error_mode_t mode,
                             sai_status_t *statuses)
 {
-    (void)entries; (void)n; (void)attr_count; (void)attr_list;
-    (void)mode; (void)statuses;
-    return SAI_STATUS_NOT_SUPPORTED;
+    if (n > 0 && (entries == NULL || attr_count == NULL || attr_list == NULL ||
+                  statuses == NULL)) {
+        return SAI_STATUS_INVALID_PARAMETER;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        sai_status_t st = get_route_entry_attribute(&entries[i],
+                                                    attr_count[i],
+                                                    attr_list[i]);
+        statuses[i] = st;
+        if (st != SAI_STATUS_SUCCESS &&
+            mode == SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR) {
+            sai_bcm_bulk_mark_not_executed(statuses, i + 1, n - i - 1);
+            break;
+        }
+    }
+    return SAI_STATUS_SUCCESS;
 }
 
 /* ---------------------------------------------------------------------------
